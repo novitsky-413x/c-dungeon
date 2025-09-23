@@ -79,6 +79,10 @@ void client_poll_messages(void) {
                         g_remote_players[id].pos.x = x;
                         g_remote_players[id].pos.y = y;
                         g_remote_players[id].colorIndex = color;
+                        if (id == g_my_player_id) {
+                            // Apply server-authoritative position/world for ourself
+                            game_mp_set_self(wx, wy, x, y);
+                        }
                     }
                 }
             }

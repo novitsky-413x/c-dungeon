@@ -23,11 +23,11 @@ static void handleInput(void) {
     int c = input_read_nonblocking();
     if (!c) return;
     switch (c) {
-        case 'w': case 'W': if (game_attempt_move_player(0, -1)) { needsRedraw = 1; if (g_mp_active) client_send_input(0, -1, 0); } break;
-        case 's': case 'S': if (game_attempt_move_player(0, 1))  { needsRedraw = 1; if (g_mp_active) client_send_input(0, 1, 0); } break;
-        case 'a': case 'A': if (game_attempt_move_player(-1, 0)) { needsRedraw = 1; if (g_mp_active) client_send_input(-1, 0, 0); } break;
-        case 'd': case 'D': if (game_attempt_move_player(1, 0))  { needsRedraw = 1; if (g_mp_active) client_send_input(1, 0, 0); } break;
-        case ' ': game_player_shoot(); if (g_mp_active) client_send_input(0, 0, 1); needsRedraw = 1; break;
+        case 'w': case 'W': if (g_mp_active) { client_send_input(0, -1, 0); needsRedraw = 1; } else if (game_attempt_move_player(0, -1)) { needsRedraw = 1; } break;
+        case 's': case 'S': if (g_mp_active) { client_send_input(0, 1, 0); needsRedraw = 1; } else if (game_attempt_move_player(0, 1))  { needsRedraw = 1; } break;
+        case 'a': case 'A': if (g_mp_active) { client_send_input(-1, 0, 0); needsRedraw = 1; } else if (game_attempt_move_player(-1, 0)) { needsRedraw = 1; } break;
+        case 'd': case 'D': if (g_mp_active) { client_send_input(1, 0, 0); needsRedraw = 1; } else if (game_attempt_move_player(1, 0))  { needsRedraw = 1; } break;
+        case ' ': if (g_mp_active) { client_send_input(0, 0, 1); needsRedraw = 1; } else { game_player_shoot(); needsRedraw = 1; } break;
         case 'q': case 'Q': if (g_mp_active) client_send_bye(); game_running = 0; break;
         default: break;
     }

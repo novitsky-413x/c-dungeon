@@ -21,6 +21,8 @@ int game_tick_status(void);
 void game_mp_set_tile(int wx, int wy, int x, int y, char tile);
 int game_mp_get_cur_world_x(void);
 int game_mp_get_cur_world_y(void);
+// In MP, server is authoritative for our own position/world
+void game_mp_set_self(int wx, int wy, int x, int y);
 
 extern int game_running;
 extern int game_player_won;
