@@ -5,13 +5,9 @@
 #include "term.h"
 #include "mp.h"
 
-static char mapData[MAP_HEIGHT][MAP_WIDTH + 1]; // legacy single-map tiles (will be replaced by curMap->tiles)
 static Vec2 playerPos;
-static Enemy enemies[MAX_ENEMIES]; // legacy single-map enemies (will be replaced by curMap->enemies)
-static int numEnemies = 0;        // legacy single-map count (will be replaced by curMap->numEnemies)
 static Direction playerFacing = DIR_RIGHT;
 static Projectile projectiles[MAX_PROJECTILES];
-static unsigned char wallDamage[MAP_HEIGHT][MAP_WIDTH]; // legacy single-map damage (will be replaced by curMap->wallDmg)
 
 // World configuration (3x3 grid: x0-y0 to x2-y2)
 #define WORLD_W 3
