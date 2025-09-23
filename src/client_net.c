@@ -4,6 +4,12 @@
 #include <string.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#else
+#include <strings.h>
+#endif
+
 static net_socket_t g_sock = -1;
 
 static void parse_host_port(const char *in, char *host, size_t hostcap, char *port, size_t portcap) {
@@ -16,7 +22,7 @@ static void parse_host_port(const char *in, char *host, size_t hostcap, char *po
         strncpy(port, "5555", portcap - 1); port[portcap - 1] = '\0';
     }
     // Normalize localhost to IPv4 to match server's IPv4 listen by default
-    if (_stricmp(host, "localhost") == 0) {
+    if (strcasecmp(host, "localhost") == 0) {
         strncpy(host, "127.0.0.1", hostcap - 1); host[hostcap - 1] = '\0';
     }
 }
