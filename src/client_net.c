@@ -1,6 +1,7 @@
 #include "client_net.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static net_socket_t g_sock = -1;
 
@@ -42,7 +43,8 @@ void client_poll_messages(void) {
     if (g_sock < 0) return;
     char buf[2048];
     int n = net_recv_nonblocking(g_sock, buf, sizeof(buf) - 1);
-    if (n <= 0) return; buf[n] = '\0';
+    if (n <= 0) return;
+    buf[n] = '\0';
     // Very simple protocol: lines like "PLAYER id wx wy x y color active" or "YOU id"
     char *p = buf;
     while (*p) {
@@ -62,7 +64,8 @@ void client_poll_messages(void) {
                 }
             }
         }
-        if (!eol) break; p = eol + 1;
+        if (!eol) break;
+        p = eol + 1;
     }
 }
 

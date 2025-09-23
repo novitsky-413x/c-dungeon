@@ -55,7 +55,8 @@ int net_send_all(net_socket_t s, const void *buf, int len) {
 #else
         int n = (int)send(s, p + sent, len - sent, 0);
 #endif
-        if (n <= 0) return n; sent += n;
+        if (n <= 0) return n;
+        sent += n;
     }
     return sent;
 }

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <string.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
@@ -118,8 +119,16 @@ int main(void) {
 #ifdef _WIN32
             Sleep((DWORD)(remaining + 0.5));
 #else
-            struct timespec req; long ms = (long)remaining; long ns = (long)((remaining - (double)ms) * 1e6) * 1000L;
-            if (ns < 0) ns = 0; req.tv_sec = ms / 1000; req.tv_nsec = (ms % 1000) * 1000000L + ns; if (req.tv_nsec >= 1000000000L) { req.tv_sec += 1; req.tv_nsec -= 1000000000L; }
+            struct timespec req;
+            long ms = (long)remaining;
+            long ns = (long)((remaining - (double)ms) * 1000000.0);
+            if (ns < 0) ns = 0;
+            req.tv_sec = ms / 1000;
+            req.tv_nsec = (ms % 1000) * 1000000L + ns;
+            if (req.tv_nsec >= 1000000000L) {
+                req.tv_sec += 1;
+                req.tv_nsec -= 1000000000L;
+            }
             nanosleep(&req, NULL);
 #endif
         }
