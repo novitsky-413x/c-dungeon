@@ -93,23 +93,40 @@ static int is_open(Map *m, int x, int y) { if (x<0||x>=MAP_WIDTH||y<0||y>=MAP_HE
 static void spawn_enemies_for_map(int mx, int my, int count) {
     if (count > MAX_ENEMIES) count = MAX_ENEMIES;
     for (int i = 0; i < MAX_ENEMIES; ++i) enemies[my][mx][i].active = 0;
-    int placed = 0;
-    while (placed < count) {
-        int x = rand() % MAP_WIDTH;
-        int y = rand() % MAP_HEIGHT;
-        if (!is_open(&world[my][mx], x, y)) continue;
-        int occ = 0;
-        for (int j = 0; j < placed; ++j) {
-            if (enemies[my][mx][j].active && enemies[my][mx][j].pos.x == x && enemies[my][mx][j].pos.y == y) { occ = 1; break; }
+
+    // Collect all open tiles on this map
+    Vec2 candidates[MAP_HEIGHT * MAP_WIDTH];
+    int numCandidates = 0;
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            if (is_open(&world[my][mx], x, y)) {
+                candidates[numCandidates].x = x;
+                candidates[numCandidates].y = y;
+                numCandidates++;
+            }
         }
-        if (occ) continue;
-        enemies[my][mx][placed].active = 1;
-        enemies[my][mx][placed].worldX = mx;
-        enemies[my][mx][placed].worldY = my;
-        enemies[my][mx][placed].pos.x = x;
-        enemies[my][mx][placed].pos.y = y;
-        enemies[my][mx][placed].hp = 2;
-        placed++;
+    }
+
+    if (numCandidates == 0) return;
+
+    // Cap the number of enemies by available open tiles
+    if (count > numCandidates) count = numCandidates;
+
+    // Shuffle candidates (Fisher–Yates)
+    for (int i = numCandidates - 1; i > 0; --i) {
+        int j = rand() % (i + 1);
+        Vec2 tmp = candidates[i];
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        enemies[my][mx][i].active = 1;
+        enemies[my][mx][i].worldX = mx;
+        enemies[my][mx][i].worldY = my;
+        enemies[my][mx][i].pos.x = candidates[i].x;
+        enemies[my][mx][i].pos.y = candidates[i].y;
+        enemies[my][mx][i].hp = 2;
     }
 }
 
