@@ -9,6 +9,9 @@ static Vec2 playerPos;
 static Vec2 exitPos;
 static Enemy enemies[MAX_ENEMIES];
 static int numEnemies = 0;
+static Direction playerFacing = DIR_RIGHT;
+static Projectile projectiles[MAX_PROJECTILES];
+static unsigned char wallDamage[MAP_HEIGHT][MAP_WIDTH];
 
 int game_running = 1;
 int game_player_won = 0;
@@ -71,6 +74,10 @@ void game_init(void) {
     game_player_won = 0;
     game_tick_count = 0;
     initMap();
+    playerFacing = DIR_RIGHT;
+    for (int i = 0; i < MAX_PROJECTILES; ++i) projectiles[i].active = 0;
+    for (int y = 0; y < MAP_HEIGHT; ++y) for (int x = 0; x < MAP_WIDTH; ++x) wallDamage[y][x] = 0;
+    for (int i = 0; i < MAX_ENEMIES; ++i) enemies[i].hp = 2;
 }
 
 int game_is_blocked(int x, int y) {
@@ -84,6 +91,7 @@ void game_spawn_enemies(int count) {
     numEnemies = count;
     for (int i = 0; i < numEnemies; ++i) {
         enemies[i].isAlive = 1;
+        enemies[i].hp = 2;
         for (int attempt = 0; attempt < 1000; ++attempt) {
             int x = rand() % MAP_WIDTH;
             int y = rand() % MAP_HEIGHT;
@@ -133,6 +141,7 @@ int game_attempt_move_player(int dx, int dy) {
     int nx = clamp(playerPos.x + dx, 0, MAP_WIDTH - 1);
     int ny = clamp(playerPos.y + dy, 0, MAP_HEIGHT - 1);
     if (!game_is_blocked(nx, ny)) {
+        if (dx < 0) playerFacing = DIR_LEFT; else if (dx > 0) playerFacing = DIR_RIGHT; else if (dy < 0) playerFacing = DIR_UP; else if (dy > 0) playerFacing = DIR_DOWN;
         if (playerPos.x != nx || playerPos.y != ny) { playerPos.x = nx; playerPos.y = ny; return 1; }
     }
     return 0;
@@ -141,6 +150,58 @@ int game_attempt_move_player(int dx, int dy) {
 void game_check_win_lose(void) {
     if (game_is_enemy_at(playerPos.x, playerPos.y)) { game_running = 0; game_player_won = 0; return; }
     if (playerPos.x == exitPos.x && playerPos.y == exitPos.y) { game_running = 0; game_player_won = 1; }
+}
+
+static int is_wall(int x, int y) {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return 0;
+    return mapData[y][x] == '#';
+}
+
+static void damage_wall(int x, int y) {
+    if (!is_wall(x, y)) return;
+    if (wallDamage[y][x] < 4) wallDamage[y][x]++;
+    else { mapData[y][x] = '.'; wallDamage[y][x] = 0; }
+}
+
+void game_player_shoot(void) {
+    for (int i = 0; i < MAX_PROJECTILES; ++i) {
+        if (!projectiles[i].active) {
+            projectiles[i].active = 1;
+            projectiles[i].pos = playerPos;
+            projectiles[i].dir = playerFacing;
+            return;
+        }
+    }
+}
+
+static void step_projectile(Projectile *p) {
+    int dx = 0, dy = 0;
+    switch (p->dir) { case DIR_UP: dy = -1; break; case DIR_DOWN: dy = 1; break; case DIR_LEFT: dx = -1; break; case DIR_RIGHT: dx = 1; break; }
+    int nx = clamp(p->pos.x + dx, 0, MAP_WIDTH - 1);
+    int ny = clamp(p->pos.y + dy, 0, MAP_HEIGHT - 1);
+    if (nx == p->pos.x && ny == p->pos.y) { p->active = 0; return; }
+    for (int i = 0; i < numEnemies; ++i) {
+        if (enemies[i].isAlive && enemies[i].pos.x == nx && enemies[i].pos.y == ny) {
+            if (enemies[i].hp > 0) enemies[i].hp--;
+            if (enemies[i].hp <= 0) enemies[i].isAlive = 0;
+            p->active = 0;
+            return;
+        }
+    }
+    if (is_wall(nx, ny)) { damage_wall(nx, ny); p->active = 0; return; }
+    p->pos.x = nx; p->pos.y = ny;
+}
+
+int game_update_projectiles(void) {
+    int changed = 0;
+    for (int i = 0; i < MAX_PROJECTILES; ++i) {
+        if (projectiles[i].active) {
+            Vec2 before = projectiles[i].pos;
+            step_projectile(&projectiles[i]);
+            if (!projectiles[i].active || projectiles[i].pos.x != before.x || projectiles[i].pos.y != before.y) changed = 1;
+        }
+    }
+    return changed;
 }
 
 void game_draw(void) {
@@ -164,17 +225,28 @@ void game_draw(void) {
                 out = 'E';
                 color = TERM_FG_BRIGHT_RED; // enemies
             } else {
-                char c = mapData[y][x];
-                if (c == '#') { out = '#'; color = TERM_FG_BRIGHT_WHITE; } // walls
-                else if (c == '.') { out = '.'; color = TERM_FG_BRIGHT_BLACK; } // floor
-                else { out = ' '; color = TERM_FG_WHITE; }
+                int drew = 0;
+                for (int pi = 0; pi < MAX_PROJECTILES; ++pi) {
+                    if (projectiles[pi].active && projectiles[pi].pos.x == x && projectiles[pi].pos.y == y) {
+                        out = '*';
+                        color = TERM_FG_BRIGHT_GREEN;
+                        drew = 1;
+                        break;
+                    }
+                }
+                if (!drew) {
+                    char c = mapData[y][x];
+                    if (c == '#') { out = '#'; color = TERM_FG_BRIGHT_WHITE; } // walls
+                    else if (c == '.') { out = '.'; color = TERM_FG_BRIGHT_BLACK; } // floor
+                    else { out = ' '; color = TERM_FG_WHITE; }
+                }
             }
             n = snprintf(frame + pos, cap - pos, "%s%c%s", color, out, TERM_SGR_RESET);
             if (n > 0) { pos += n; if (pos > cap) pos = cap; }
         }
         if (pos < cap) frame[pos++] = '\n';
     }
-    n = snprintf(frame + pos, cap - pos, "\nUse WASD or Arrow Keys to move. Reach X, avoid E. Press Q to quit.\n");
+    n = snprintf(frame + pos, cap - pos, "\nUse WASD or Arrow Keys to move. Space to shoot. Reach X, avoid E. Press Q to quit.\n");
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);

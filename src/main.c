@@ -23,6 +23,7 @@ static void handleInput(void) {
         case 's': case 'S': if (game_attempt_move_player(0, 1)) needsRedraw = 1; break;
         case 'a': case 'A': if (game_attempt_move_player(-1, 0)) needsRedraw = 1; break;
         case 'd': case 'D': if (game_attempt_move_player(1, 0)) needsRedraw = 1; break;
+        case ' ': game_player_shoot(); needsRedraw = 1; break;
         case 'q': case 'Q': game_running = 0; break;
         default: break;
     }
@@ -43,6 +44,7 @@ int main(void) {
         double frameStart = now_ms();
         handleInput();
         if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
+        if (game_update_projectiles()) needsRedraw = 1;
         game_check_win_lose();
         if (needsRedraw) { game_draw(); needsRedraw = 0; }
         const double targetFrameMs = 16.6667;

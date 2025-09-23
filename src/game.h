@@ -12,6 +12,10 @@ int game_attempt_move_player(int dx, int dy);
 void game_check_win_lose(void);
 void game_draw(void);
 
+// Shooting API
+void game_player_shoot(void);
+int game_update_projectiles(void);
+
 extern int game_running;
 extern int game_player_won;
 extern int game_tick_count;
