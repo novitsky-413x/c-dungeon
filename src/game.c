@@ -132,7 +132,7 @@ int game_is_enemy_at(int x, int y) {
 }
 
 int game_move_enemies(void) {
-    if (g_mp_active) return 0; // disabled in multiplayer
+    if (g_mp_active) return 0; // disabled in multiplayer; enemies come from server
     int moved = 0;
     for (int i = 0; i < curMap->numEnemies; ++i) {
         if (!curMap->enemies[i].isAlive) continue;
@@ -344,6 +344,17 @@ void game_draw(void) {
                         if (g_remote_bullets[bi].active && g_remote_bullets[bi].worldX == curWorldX && g_remote_bullets[bi].worldY == curWorldY && g_remote_bullets[bi].pos.x == x && g_remote_bullets[bi].pos.y == y) {
                             out = '*';
                             color = TERM_FG_BRIGHT_GREEN;
+                            drew = 1;
+                            break;
+                        }
+                    }
+                }
+                // Remote enemies overlay on base tiles when in MP
+                if (!drew && g_mp_active) {
+                    for (int ei = 0; ei < MAX_REMOTE_ENEMIES; ++ei) {
+                        if (g_remote_enemies[ei].active && g_remote_enemies[ei].worldX == curWorldX && g_remote_enemies[ei].worldY == curWorldY && g_remote_enemies[ei].pos.x == x && g_remote_enemies[ei].pos.y == y) {
+                            out = 'E';
+                            color = TERM_FG_BRIGHT_RED;
                             drew = 1;
                             break;
                         }

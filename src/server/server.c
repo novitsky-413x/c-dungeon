@@ -35,6 +35,14 @@ typedef struct {
 } SrvBullet;
 
 typedef struct {
+    int active;
+    int worldX;
+    int worldY;
+    Vec2 pos;
+    int hp;
+} SrvEnemy;
+
+typedef struct {
     int connected;
     sock_t sock;
     int worldX, worldY;
@@ -50,6 +58,7 @@ static Map world[WORLD_H][WORLD_W];
 static Client clients[MAX_CLIENTS];
 static unsigned long long g_nextConnId = 1ULL;
 static SrvBullet bullets[MAX_REMOTE_BULLETS];
+static SrvEnemy enemies[WORLD_H][WORLD_W][MAX_ENEMIES];
 
 static FILE *try_open_map(const char *prefix, int mx, int my) {
     char path[256]; snprintf(path, sizeof(path), "%smaps/x%d-y%d.txt", prefix, mx, my);
@@ -81,6 +90,29 @@ static void load_map_file(int mx, int my) {
 
 static int is_open(Map *m, int x, int y) { if (x<0||x>=MAP_WIDTH||y<0||y>=MAP_HEIGHT) return 0; return m->tiles[y][x] != '#'; }
 
+static void spawn_enemies_for_map(int mx, int my, int count) {
+    if (count > MAX_ENEMIES) count = MAX_ENEMIES;
+    for (int i = 0; i < MAX_ENEMIES; ++i) enemies[my][mx][i].active = 0;
+    int placed = 0;
+    while (placed < count) {
+        int x = rand() % MAP_WIDTH;
+        int y = rand() % MAP_HEIGHT;
+        if (!is_open(&world[my][mx], x, y)) continue;
+        int occ = 0;
+        for (int j = 0; j < placed; ++j) {
+            if (enemies[my][mx][j].active && enemies[my][mx][j].pos.x == x && enemies[my][mx][j].pos.y == y) { occ = 1; break; }
+        }
+        if (occ) continue;
+        enemies[my][mx][placed].active = 1;
+        enemies[my][mx][placed].worldX = mx;
+        enemies[my][mx][placed].worldY = my;
+        enemies[my][mx][placed].pos.x = x;
+        enemies[my][mx][placed].pos.y = y;
+        enemies[my][mx][placed].hp = 2;
+        placed++;
+    }
+}
+
 static void place_random(Client *c) {
     // Spawn everyone on the same map (0,0) so players can see each other immediately
     for (int tries = 0; tries < 5000; ++tries) {
@@ -111,6 +143,17 @@ static void broadcast_state(void) {
         int n = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
         if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
     }
+    // broadcast enemies
+    for (int wy = 0; wy < WORLD_H; ++wy) {
+        for (int wx = 0; wx < WORLD_W; ++wx) {
+            for (int i = 0; i < MAX_ENEMIES; ++i) {
+                SrvEnemy *e = &enemies[wy][wx][i];
+                if (!e->active) continue;
+                int n = snprintf(line, sizeof(line), "ENEMY %d %d %d %d %d\n", wx, wy, e->pos.x, e->pos.y, e->hp);
+                if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
+            }
+        }
+    }
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         if (!clients[i].connected) continue;
 #ifdef _WIN32
@@ -139,6 +182,17 @@ static void step_bullets(void) {
         int ny = bullets[i].pos.y + dy;
         if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) { bullets[i].active = 0; continue; }
         Map *m = &world[bullets[i].worldY][bullets[i].worldX];
+        // Check enemy hit
+        for (int ei = 0; ei < MAX_ENEMIES; ++ei) {
+            SrvEnemy *e = &enemies[bullets[i].worldY][bullets[i].worldX][ei];
+            if (!e->active) continue;
+            if (e->pos.x == nx && e->pos.y == ny) {
+                if (e->hp > 0) e->hp--;
+                if (e->hp <= 0) e->active = 0;
+                bullets[i].active = 0;
+                goto bullet_continue;
+            }
+        }
         if (m->tiles[ny][nx] == '#') {
             // simple destructible after 5 hits not tracked server-side; just break wall immediately for now
             m->tiles[ny][nx] = '.';
@@ -147,6 +201,35 @@ static void step_bullets(void) {
             continue;
         }
         bullets[i].pos.x = nx; bullets[i].pos.y = ny;
+bullet_continue:
+        ;
+    }
+}
+
+static void step_enemies(void) {
+    for (int wy = 0; wy < WORLD_H; ++wy) {
+        for (int wx = 0; wx < WORLD_W; ++wx) {
+            for (int i = 0; i < MAX_ENEMIES; ++i) {
+                SrvEnemy *e = &enemies[wy][wx][i];
+                if (!e->active) continue;
+                int dir = rand() % 4;
+                int dx = 0, dy = 0;
+                switch (dir) { case 0: dy = -1; break; case 1: dy = 1; break; case 2: dx = -1; break; case 3: dx = 1; break; }
+                int nx = e->pos.x + dx;
+                int ny = e->pos.y + dy;
+                if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) continue;
+                if (!is_open(&world[wy][wx], nx, ny)) continue;
+                int occ = 0;
+                for (int j = 0; j < MAX_ENEMIES; ++j) {
+                    if (j == i) continue;
+                    SrvEnemy *o = &enemies[wy][wx][j];
+                    if (!o->active) continue;
+                    if (o->pos.x == nx && o->pos.y == ny) { occ = 1; break; }
+                }
+                if (occ) continue;
+                e->pos.x = nx; e->pos.y = ny;
+            }
+        }
     }
 }
 
@@ -159,6 +242,8 @@ int main(int argc, char **argv) {
 
     for (int y = 0; y < WORLD_H; ++y) for (int x = 0; x < WORLD_W; ++x) load_map_file(x, y);
     memset(clients, 0, sizeof(clients));
+    memset(bullets, 0, sizeof(bullets));
+    for (int y = 0; y < WORLD_H; ++y) for (int x = 0; x < WORLD_W; ++x) spawn_enemies_for_map(x, y, 4);
 
     struct addrinfo hints; memset(&hints, 0, sizeof(hints)); hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM; hints.ai_flags = AI_PASSIVE;
     struct addrinfo *res = NULL; if (getaddrinfo(NULL, port, &hints, &res) != 0) { fprintf(stderr, "getaddrinfo failed\n"); return 1; }
@@ -304,6 +389,7 @@ int main(int argc, char **argv) {
         }
 
         step_bullets();
+        step_enemies();
         broadcast_state();
     }
 
