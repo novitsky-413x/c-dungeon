@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <time.h>
 #endif
 
 // Game configuration
@@ -100,6 +101,25 @@ static void enableRawMode(void) {
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 }
 #endif
+
+// Timing
+static double now_ms(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    static int initialized = 0;
+    if (!initialized) {
+        QueryPerformanceFrequency(&freq);
+        initialized = 1;
+    }
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart * 1000.0 / (double)freq.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+#endif
+}
 
 static int readInputNonBlocking(void) {
 #ifdef _WIN32
@@ -370,6 +390,7 @@ int main(void) {
 
     // Main loop
     while (gameRunning) {
+        double frameStart = now_ms();
         handleInput();
 
         if ((tickCount % 6) == 0) {
@@ -382,11 +403,24 @@ int main(void) {
             needsRedraw = 0;
         }
 
+        // 60 FPS cap (~16.67 ms per frame)
+        const double targetFrameMs = 16.6667;
+        double elapsed = now_ms() - frameStart;
+        double remaining = targetFrameMs - elapsed;
+        if (remaining > 0) {
 #ifdef _WIN32
-        if (needsRedraw) Sleep(30); else Sleep(5);
+            Sleep((DWORD)(remaining + 0.5));
 #else
-        if (needsRedraw) usleep(30 * 1000); else usleep(5 * 1000);
+            struct timespec req;
+            long ms = (long)remaining;
+            long ns = (long)((remaining - (double)ms) * 1e6) * 1000L; // convert to nanoseconds
+            if (ns < 0) ns = 0;
+            req.tv_sec = ms / 1000;
+            req.tv_nsec = (ms % 1000) * 1000000L + ns;
+            if (req.tv_nsec >= 1000000000L) { req.tv_sec += 1; req.tv_nsec -= 1000000000L; }
+            nanosleep(&req, NULL);
 #endif
+        }
         tickCount++;
     }
 
