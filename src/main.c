@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -12,6 +13,8 @@
 #include "timeutil.h"
 #include "input.h"
 #include "game.h"
+#include "mp.h"
+#include "client_net.h"
 
 static int needsRedraw = 1;
 
@@ -19,14 +22,30 @@ static void handleInput(void) {
     int c = input_read_nonblocking();
     if (!c) return;
     switch (c) {
-        case 'w': case 'W': if (game_attempt_move_player(0, -1)) needsRedraw = 1; break;
-        case 's': case 'S': if (game_attempt_move_player(0, 1)) needsRedraw = 1; break;
-        case 'a': case 'A': if (game_attempt_move_player(-1, 0)) needsRedraw = 1; break;
-        case 'd': case 'D': if (game_attempt_move_player(1, 0)) needsRedraw = 1; break;
-        case ' ': game_player_shoot(); needsRedraw = 1; break;
+        case 'w': case 'W': if (game_attempt_move_player(0, -1)) { needsRedraw = 1; if (g_mp_active) client_send_input(0, -1, 0); } break;
+        case 's': case 'S': if (game_attempt_move_player(0, 1))  { needsRedraw = 1; if (g_mp_active) client_send_input(0, 1, 0); } break;
+        case 'a': case 'A': if (game_attempt_move_player(-1, 0)) { needsRedraw = 1; if (g_mp_active) client_send_input(-1, 0, 0); } break;
+        case 'd': case 'D': if (game_attempt_move_player(1, 0))  { needsRedraw = 1; if (g_mp_active) client_send_input(1, 0, 0); } break;
+        case ' ': game_player_shoot(); if (g_mp_active) client_send_input(0, 0, 1); needsRedraw = 1; break;
         case 'q': case 'Q': game_running = 0; break;
         default: break;
     }
+}
+
+static void print_menu(void) {
+    term_clear_screen();
+    printf("Dungeon\n\n1) Singleplayer\n2) Multiplayer\nSelect: ");
+    fflush(stdout);
+}
+
+static int read_line(char *buf, int cap) {
+    int n = 0; int c;
+    while (n < cap - 1 && (c = input_read_nonblocking()) != 0) {
+        if (c == '\r' || c == '\n') break;
+        buf[n++] = (char)c;
+    }
+    buf[n] = '\0';
+    return n;
 }
 
 int main(void) {
@@ -37,12 +56,56 @@ int main(void) {
     term_enable_raw_mode();
 #endif
 
+    // Simple blocking menu (poll loop)
+    int mode = 0;
+    print_menu();
+    while (!mode) {
+        int c = input_read_nonblocking();
+        if (c == '1') mode = 1; else if (c == '2') mode = 2;
+        if (!mode) {
+            // small sleep
+#ifdef _WIN32
+            Sleep(30);
+#else
+            usleep(30000);
+#endif
+        }
+    }
+    if (mode == 2) {
+        term_clear_screen();
+        printf("Enter server host[:port] (default port 5555): "); fflush(stdout);
+        char addr[256] = {0};
+        // crude line read: wait until user hits Enter
+        int entered = 0; int c;
+        while (!entered) {
+            c = input_read_nonblocking();
+            if (c == 0) {
+#ifdef _WIN32
+                Sleep(30);
+#else
+                usleep(30000);
+#endif
+                continue;
+            }
+            if (c == '\r' || c == '\n') { entered = 1; }
+            else if (c == 8 || c == 127) { int len = (int)strlen(addr); if (len > 0) { addr[len-1] = '\0'; printf("\b \b"); fflush(stdout); } }
+            else if (c >= 32 && c <= 126) { size_t len = strlen(addr); if (len < sizeof(addr)-1) { addr[len] = (char)c; addr[len+1] = '\0'; putchar((char)c); fflush(stdout); } }
+        }
+        // Connect to server
+        if (client_connect(addr) == 0) {
+            g_mp_active = 1;
+        } else {
+            printf("\nFailed to connect. Starting singleplayer.\n");
+        }
+    }
+
     game_init();
     game_spawn_enemies(4);
 
     while (game_running) {
         double frameStart = now_ms();
         handleInput();
+        if (g_mp_active) client_poll_messages();
         if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
         if (game_update_projectiles()) needsRedraw = 1;
         if (game_tick_status()) needsRedraw = 1;

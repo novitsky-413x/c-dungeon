@@ -3,6 +3,7 @@
 #include <string.h>
 #include "types.h"
 #include "term.h"
+#include "mp.h"
 
 static char mapData[MAP_HEIGHT][MAP_WIDTH + 1]; // legacy single-map tiles (will be replaced by curMap->tiles)
 static Vec2 playerPos;
@@ -52,7 +53,7 @@ static void load_map_file(int mx, int my) {
         }
     } else {
         char line[512];
-        for (int y = 0; y < MAP_HEIGHT; ++y) {
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
             if (fgets(line, (int)sizeof(line), f) == NULL) {
                 for (; y < MAP_HEIGHT; ++y) {
                     for (int x = 0; x < MAP_WIDTH; ++x) m->tiles[y][x] = '#';
@@ -61,7 +62,7 @@ static void load_map_file(int mx, int my) {
                 break;
             }
             int len = (int)strcspn(line, "\r\n");
-            for (int x = 0; x < MAP_WIDTH; ++x) {
+        for (int x = 0; x < MAP_WIDTH; ++x) {
                 char c = (x < len) ? line[x] : '#';
                 if (c != '#' && c != '.' && c != 'X' && c != 'W' && c != '@') c = '.';
                 m->tiles[y][x] = c;
@@ -173,9 +174,9 @@ int game_attempt_move_player(int dx, int dy) {
     int ny = playerPos.y + dy;
     if (dx < 0) playerFacing = DIR_LEFT; else if (dx > 0) playerFacing = DIR_RIGHT; else if (dy < 0) playerFacing = DIR_UP; else if (dy > 0) playerFacing = DIR_DOWN;
     if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
-        if (!game_is_blocked(nx, ny)) {
-            if (playerPos.x != nx || playerPos.y != ny) { playerPos.x = nx; playerPos.y = ny; return 1; }
-        }
+    if (!game_is_blocked(nx, ny)) {
+        if (playerPos.x != nx || playerPos.y != ny) { playerPos.x = nx; playerPos.y = ny; return 1; }
+    }
         return 0;
     }
     if (nx < 0) return try_enter_map(curWorldX - 1, curWorldY, MAP_WIDTH - 1, ny);
@@ -318,6 +319,7 @@ void game_draw(void) {
                 color = TERM_FG_BRIGHT_RED; // enemies
             } else {
                 int drew = 0;
+                // Projectiles
                 for (int pi = 0; pi < MAX_PROJECTILES; ++pi) {
                     if (projectiles[pi].active && projectiles[pi].pos.x == x && projectiles[pi].pos.y == y) {
                         out = '*';
@@ -340,6 +342,29 @@ void game_draw(void) {
             if (n > 0) { pos += n; if (pos > cap) pos = cap; }
         }
         if (pos < cap) frame[pos++] = '\n';
+    }
+    // Overlay remote players for this map
+    if (g_mp_active) {
+        for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) {
+            if (!g_remote_players[i].active) continue;
+            if (g_remote_players[i].worldX == curWorldX && g_remote_players[i].worldY == curWorldY) {
+                int rx = g_remote_players[i].pos.x;
+                int ry = g_remote_players[i].pos.y;
+                if (rx >= 0 && rx < MAP_WIDTH && ry >= 0 && ry < MAP_HEIGHT) {
+                    const char *pcolor = TERM_FG_BRIGHT_BLUE;
+                    switch (g_remote_players[i].colorIndex % 6) {
+                        case 0: pcolor = TERM_FG_BRIGHT_BLUE; break;
+                        case 1: pcolor = TERM_FG_BRIGHT_MAGENTA; break;
+                        case 2: pcolor = TERM_FG_BRIGHT_CYAN; break;
+                        case 3: pcolor = TERM_FG_BRIGHT_GREEN; break;
+                        case 4: pcolor = TERM_FG_BRIGHT_YELLOW; break;
+                        case 5: pcolor = TERM_FG_BRIGHT_RED; break;
+                    }
+                    n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s@%s", ry + 1, rx + 1, pcolor, TERM_SGR_RESET);
+                    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+                }
+            }
+        }
     }
     n = snprintf(frame + pos, cap - pos, "\nLives: %d    Score: %d    Location: (%d,%d)\nUse WASD/Arrows to move, Space to shoot.\nFind purple W to win. Press Q to quit.\n", game_player_lives, game_score, curWorldX * MAP_WIDTH + playerPos.x, curWorldY * MAP_HEIGHT + playerPos.y);
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }

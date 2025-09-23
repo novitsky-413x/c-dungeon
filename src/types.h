@@ -5,6 +5,7 @@
 #define MAP_HEIGHT 18
 #define MAX_ENEMIES 5
 #define MAX_PROJECTILES 32
+#define MAX_REMOTE_PLAYERS 16
 
 typedef struct {
     int x;
@@ -29,6 +30,14 @@ typedef struct {
     Vec2 pos;
     Direction dir;
 } Projectile;
+
+typedef struct {
+    int active;
+    int worldX;
+    int worldY;
+    Vec2 pos;
+    int colorIndex;
+} RemotePlayer;
 
 #endif // TYPES_H
 
