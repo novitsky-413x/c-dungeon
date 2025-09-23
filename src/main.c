@@ -45,6 +45,7 @@ int main(void) {
         handleInput();
         if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
         if (game_update_projectiles()) needsRedraw = 1;
+        if (game_tick_status()) needsRedraw = 1;
         game_check_win_lose();
         if (needsRedraw) { game_draw(); needsRedraw = 0; }
         const double targetFrameMs = 16.6667;

@@ -32,6 +32,9 @@ static MapState *curMap = NULL;
 int game_running = 1;
 int game_player_won = 0;
 int game_tick_count = 0;
+int game_player_lives = 3;
+int game_score = 0;
+static int invincible_frames = 0; // frames remaining of invincibility
 
 // External maps will be loaded from files instead of default hardcoded map
 
@@ -88,6 +91,8 @@ void game_init(void) {
     world_init();
     playerFacing = DIR_RIGHT;
     for (int i = 0; i < MAX_PROJECTILES; ++i) projectiles[i].active = 0;
+    game_player_lives = 3;
+    game_score = 0;
 }
 
 int game_is_blocked(int x, int y) {
@@ -154,13 +159,8 @@ static int try_enter_map(int newWorldX, int newWorldY, int targetX, int targetY)
     MapState *next = &world[newWorldY][newWorldX];
     int tx = clamp(targetX, 0, MAP_WIDTH - 1);
     int ty = clamp(targetY, 0, MAP_HEIGHT - 1);
-    if (next->tiles[ty][tx] == '#') {
-        if (tx == 0) { for (int x = 0; x < MAP_WIDTH; ++x) { if (next->tiles[ty][x] != '#') { tx = x; break; } } }
-        else if (tx == MAP_WIDTH - 1) { for (int x = MAP_WIDTH - 1; x >= 0; --x) { if (next->tiles[ty][x] != '#') { tx = x; break; } } }
-        else if (ty == 0) { for (int y = 0; y < MAP_HEIGHT; ++y) { if (next->tiles[y][tx] != '#') { ty = y; break; } } }
-        else if (ty == MAP_HEIGHT - 1) { for (int y = MAP_HEIGHT - 1; y >= 0; --y) { if (next->tiles[y][tx] != '#') { ty = y; break; } } }
-        if (next->tiles[ty][tx] == '#') return 0;
-    }
+    // Only allow transition if the exact entry cell in the next map is open
+    if (next->tiles[ty][tx] == '#') return 0;
     curWorldX = newWorldX; curWorldY = newWorldY; curMap = next;
     for (int i = 0; i < MAX_PROJECTILES; ++i) projectiles[i].active = 0;
     if (!curMap->initialized) game_spawn_enemies(4);
@@ -186,7 +186,56 @@ int game_attempt_move_player(int dx, int dy) {
 }
 
 void game_check_win_lose(void) {
-    if (game_is_enemy_at(playerPos.x, playerPos.y)) { game_running = 0; game_player_won = 0; return; }
+    if (game_is_enemy_at(playerPos.x, playerPos.y) && invincible_frames <= 0) {
+        // lose a life and respawn at current map's spawn '@' if available; otherwise top-left open
+        game_player_lives--;
+        if (game_player_lives <= 0) {
+            // Reset lives and score, and teleport to a random different map
+            game_player_lives = 3;
+            game_score = 0;
+            int fromX = curWorldX, fromY = curWorldY;
+            int placedGlobal = 0;
+            int tries = 100;
+            while (tries-- > 0 && !placedGlobal) {
+                int rx = rand() % WORLD_W;
+                int ry = rand() % WORLD_H;
+                if (rx == fromX && ry == fromY) continue;
+                MapState *m = &world[ry][rx];
+                for (int y2 = 0; y2 < MAP_HEIGHT && !placedGlobal; ++y2) {
+                    for (int x2 = 0; x2 < MAP_WIDTH && !placedGlobal; ++x2) {
+                        char c = m->tiles[y2][x2];
+                        if (c == '.' || c == '@') { curWorldX = rx; curWorldY = ry; curMap = m; playerPos.x = x2; playerPos.y = y2; placedGlobal = 1; }
+                    }
+                }
+            }
+            if (!placedGlobal) {
+                // Fallback deterministic search
+                for (int ry = 0; ry < WORLD_H && !placedGlobal; ++ry) {
+                    for (int rx = 0; rx < WORLD_W && !placedGlobal; ++rx) {
+                        if (rx == fromX && ry == fromY) continue;
+                        MapState *m = &world[ry][rx];
+                        for (int y2 = 0; y2 < MAP_HEIGHT && !placedGlobal; ++y2) {
+                            for (int x2 = 0; x2 < MAP_WIDTH && !placedGlobal; ++x2) {
+                                char c = m->tiles[y2][x2];
+                                if (c == '.' || c == '@') { curWorldX = rx; curWorldY = ry; curMap = m; playerPos.x = x2; playerPos.y = y2; placedGlobal = 1; }
+                            }
+                        }
+                    }
+                }
+            }
+            for (int i = 0; i < MAX_PROJECTILES; ++i) projectiles[i].active = 0;
+            // continue running
+            return;
+        }
+        // Remain in place, grant 3 seconds invincibility (~180 frames at 60 FPS)
+        invincible_frames = 180;
+        return;
+    }
+    // Restore lives when stepping on 'X'
+    if (curMap && curMap->tiles[playerPos.y][playerPos.x] == 'X') {
+        if (game_player_lives < 3) game_player_lives = 3;
+        curMap->tiles[playerPos.y][playerPos.x] = '.'; // consume the X
+    }
     if (curMap && curMap->tiles[playerPos.y][playerPos.x] == 'W') { game_running = 0; game_player_won = 1; }
 }
 
@@ -221,7 +270,7 @@ static void step_projectile(Projectile *p) {
     for (int i = 0; i < curMap->numEnemies; ++i) {
         if (curMap->enemies[i].isAlive && curMap->enemies[i].pos.x == nx && curMap->enemies[i].pos.y == ny) {
             if (curMap->enemies[i].hp > 0) curMap->enemies[i].hp--;
-            if (curMap->enemies[i].hp <= 0) curMap->enemies[i].isAlive = 0;
+            if (curMap->enemies[i].hp <= 0) { curMap->enemies[i].isAlive = 0; game_score += 1; }
             p->active = 0;
             return;
         }
@@ -242,6 +291,12 @@ int game_update_projectiles(void) {
     return changed;
 }
 
+int game_tick_status(void) {
+    int changed = 0;
+    if (invincible_frames > 0) { invincible_frames--; changed = 1; }
+    return changed;
+}
+
 void game_draw(void) {
     // Increase buffer to account for ANSI color sequences per cell
     char frame[16384];
@@ -254,7 +309,9 @@ void game_draw(void) {
             const char *color = TERM_FG_WHITE;
             char out;
             if (x == playerPos.x && y == playerPos.y) {
-                out = '@';
+                // Flicker player during invincibility: toggle visible every ~8 frames
+                int visible = (invincible_frames <= 0) || ((invincible_frames / 8) % 2 == 0);
+                out = visible ? '@' : ' ';
                 color = TERM_FG_BRIGHT_CYAN; // player
             } else if (game_is_enemy_at(x, y)) {
                 out = 'E';
@@ -284,7 +341,7 @@ void game_draw(void) {
         }
         if (pos < cap) frame[pos++] = '\n';
     }
-    n = snprintf(frame + pos, cap - pos, "\nUse WASD/Arrows to move, Space to shoot. Find purple W to win. Press Q to quit.\n");
+    n = snprintf(frame + pos, cap - pos, "\nLives: %d    Score: %d    Location: (%d,%d)\nUse WASD/Arrows to move, Space to shoot.\nFind purple W to win. Press Q to quit.\n", game_player_lives, game_score, curWorldX * MAP_WIDTH + playerPos.x, curWorldY * MAP_HEIGHT + playerPos.y);
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);

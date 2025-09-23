@@ -15,10 +15,13 @@ void game_draw(void);
 // Shooting API
 void game_player_shoot(void);
 int game_update_projectiles(void);
+int game_tick_status(void);
 
 extern int game_running;
 extern int game_player_won;
 extern int game_tick_count;
+extern int game_player_lives;
+extern int game_score;
 
 #endif // GAME_H
 
