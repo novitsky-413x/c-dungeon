@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "types.h"
+#include "term.h"
 
 static char mapData[MAP_HEIGHT][MAP_WIDTH + 1];
 static Vec2 playerPos;
@@ -143,19 +144,33 @@ void game_check_win_lose(void) {
 }
 
 void game_draw(void) {
-    char frame[4096];
+    // Increase buffer to account for ANSI color sequences per cell
+    char frame[16384];
     int pos = 0;
     int cap = (int)sizeof(frame);
     int n = snprintf(frame + pos, cap - pos, "\x1b[2J\x1b[H");
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
+            const char *color = TERM_FG_WHITE;
             char out;
-            if (x == playerPos.x && y == playerPos.y) out = '@';
-            else if (x == exitPos.x && y == exitPos.y) out = 'X';
-            else if (game_is_enemy_at(x, y)) out = 'E';
-            else { char c = mapData[y][x]; out = (c == '#') ? '#' : (c == '.' ? '.' : ' '); }
-            if (pos < cap) frame[pos++] = out;
+            if (x == playerPos.x && y == playerPos.y) {
+                out = '@';
+                color = TERM_FG_BRIGHT_CYAN; // player
+            } else if (x == exitPos.x && y == exitPos.y) {
+                out = 'X';
+                color = TERM_FG_BRIGHT_YELLOW; // exit
+            } else if (game_is_enemy_at(x, y)) {
+                out = 'E';
+                color = TERM_FG_BRIGHT_RED; // enemies
+            } else {
+                char c = mapData[y][x];
+                if (c == '#') { out = '#'; color = TERM_FG_BRIGHT_WHITE; } // walls
+                else if (c == '.') { out = '.'; color = TERM_FG_BRIGHT_BLACK; } // floor
+                else { out = ' '; color = TERM_FG_WHITE; }
+            }
+            n = snprintf(frame + pos, cap - pos, "%s%c%s", color, out, TERM_SGR_RESET);
+            if (n > 0) { pos += n; if (pos > cap) pos = cap; }
         }
         if (pos < cap) frame[pos++] = '\n';
     }
