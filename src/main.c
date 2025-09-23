@@ -39,15 +39,7 @@ static void print_menu(void) {
     fflush(stdout);
 }
 
-static int read_line(char *buf, int cap) {
-    int n = 0; int c;
-    while (n < cap - 1 && (c = input_read_nonblocking()) != 0) {
-        if (c == '\r' || c == '\n') break;
-        buf[n++] = (char)c;
-    }
-    buf[n] = '\0';
-    return n;
-}
+// removed unused read_line
 
 int main(void) {
     srand((unsigned int)time(NULL));
