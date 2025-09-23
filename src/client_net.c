@@ -58,6 +58,8 @@ void client_poll_messages(void) {
     buf[n] = '\0';
     // Reset remote bullets; server sends a full snapshot each tick
     for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) g_remote_bullets[i].active = 0;
+    // Reset remote enemies each tick as well
+    for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) g_remote_enemies[i].active = 0;
     // Protocol lines:
     //  - YOU id
     //  - PLAYER id wx wy x y color active
@@ -79,6 +81,10 @@ void client_poll_messages(void) {
                         g_remote_players[id].pos.x = x;
                         g_remote_players[id].pos.y = y;
                         g_remote_players[id].colorIndex = color;
+                        if (id == g_my_player_id) {
+                            // Apply server-authoritative position/world for ourself
+                            game_mp_set_self(wx, wy, x, y);
+                        }
                     }
                 }
             }
@@ -104,6 +110,25 @@ void client_poll_messages(void) {
                     g_remote_bullets[slot].worldY = wy;
                     g_remote_bullets[slot].pos.x = x;
                     g_remote_bullets[slot].pos.y = y;
+                }
+            }
+        } else if (strncmp(p, "ENEMY ", 7) == 0) {
+            int wx, wy, x, y, hp;
+            if (sscanf(p + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &hp) == 5) {
+                int slot = -1;
+                for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) {
+                    if (g_remote_enemies[i].active && g_remote_enemies[i].worldX == wx && g_remote_enemies[i].worldY == wy && g_remote_enemies[i].pos.x == x && g_remote_enemies[i].pos.y == y) { slot = i; break; }
+                }
+                if (slot < 0) {
+                    for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) { if (!g_remote_enemies[i].active) { slot = i; break; } }
+                }
+                if (slot >= 0) {
+                    g_remote_enemies[slot].active = (hp > 0);
+                    g_remote_enemies[slot].worldX = wx;
+                    g_remote_enemies[slot].worldY = wy;
+                    g_remote_enemies[slot].pos.x = x;
+                    g_remote_enemies[slot].pos.y = y;
+                    g_remote_enemies[slot].hp = hp;
                 }
             }
         }

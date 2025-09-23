@@ -75,10 +75,15 @@ static void load_map_file(int mx, int my) {
 static void world_init(void) {
     for (int y = 0; y < WORLD_H; ++y) for (int x = 0; x < WORLD_W; ++x) load_map_file(x, y);
     curWorldX = 0; curWorldY = 0; curMap = &world[curWorldY][curWorldX];
-    // Find spawn '@'
-    int found = 0;
-    for (int y = 0; y < MAP_HEIGHT && !found; ++y) for (int x = 0; x < MAP_WIDTH && !found; ++x) if (curMap->tiles[y][x] == '@') { playerPos.x = x; playerPos.y = y; curMap->tiles[y][x] = '.'; found = 1; }
-    if (!found) { playerPos.x = 1; playerPos.y = 1; }
+    // In singleplayer, honor '@' spawn. In multiplayer, server is authoritative for our spawn.
+    if (!g_mp_active) {
+        int found = 0;
+        for (int y = 0; y < MAP_HEIGHT && !found; ++y) for (int x = 0; x < MAP_WIDTH && !found; ++x) if (curMap->tiles[y][x] == '@') { playerPos.x = x; playerPos.y = y; curMap->tiles[y][x] = '.'; found = 1; }
+        if (!found) { playerPos.x = 1; playerPos.y = 1; }
+    } else {
+        // Placeholder until server snapshot arrives
+        playerPos.x = 0; playerPos.y = 0;
+    }
 }
 
 void game_init(void) {
@@ -127,6 +132,7 @@ int game_is_enemy_at(int x, int y) {
 }
 
 int game_move_enemies(void) {
+    if (g_mp_active) return 0; // disabled in multiplayer; enemies come from server
     int moved = 0;
     for (int i = 0; i < curMap->numEnemies; ++i) {
         if (!curMap->enemies[i].isAlive) continue;
@@ -169,6 +175,7 @@ int game_attempt_move_player(int dx, int dy) {
     int nx = playerPos.x + dx;
     int ny = playerPos.y + dy;
     if (dx < 0) playerFacing = DIR_LEFT; else if (dx > 0) playerFacing = DIR_RIGHT; else if (dy < 0) playerFacing = DIR_UP; else if (dy > 0) playerFacing = DIR_DOWN;
+    if (g_mp_active) return 0; // server authoritative; do not move locally
     if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
     if (!game_is_blocked(nx, ny)) {
         if (playerPos.x != nx || playerPos.y != ny) { playerPos.x = nx; playerPos.y = ny; return 1; }
@@ -183,6 +190,10 @@ int game_attempt_move_player(int dx, int dy) {
 }
 
 void game_check_win_lose(void) {
+    if (g_mp_active) {
+        // No local win/lose logic in MP mode
+        return;
+    }
     if (game_is_enemy_at(playerPos.x, playerPos.y) && invincible_frames <= 0) {
         // lose a life and respawn at current map's spawn '@' if available; otherwise top-left open
         game_player_lives--;
@@ -277,6 +288,7 @@ static void step_projectile(Projectile *p) {
 }
 
 int game_update_projectiles(void) {
+    if (g_mp_active) return 0; // disabled in multiplayer; server bullets are rendered via overlay
     int changed = 0;
     for (int i = 0; i < MAX_PROJECTILES; ++i) {
         if (projectiles[i].active) {
@@ -305,23 +317,25 @@ void game_draw(void) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_WHITE;
             char out;
-            if (x == playerPos.x && y == playerPos.y) {
+            if (!g_mp_active && x == playerPos.x && y == playerPos.y) {
                 // Flicker player during invincibility: toggle visible every ~8 frames
                 int visible = (invincible_frames <= 0) || ((invincible_frames / 8) % 2 == 0);
                 out = visible ? '@' : ' ';
                 color = TERM_FG_BRIGHT_CYAN; // player
-            } else if (game_is_enemy_at(x, y)) {
+            } else if (!g_mp_active && game_is_enemy_at(x, y)) {
                 out = 'E';
                 color = TERM_FG_BRIGHT_RED; // enemies
             } else {
                 int drew = 0;
                 // Projectiles (local)
-                for (int pi = 0; pi < MAX_PROJECTILES; ++pi) {
-                    if (projectiles[pi].active && projectiles[pi].pos.x == x && projectiles[pi].pos.y == y) {
-                        out = '*';
-                        color = TERM_FG_BRIGHT_GREEN;
-                        drew = 1;
-                        break;
+                if (!g_mp_active) {
+                    for (int pi = 0; pi < MAX_PROJECTILES; ++pi) {
+                        if (projectiles[pi].active && projectiles[pi].pos.x == x && projectiles[pi].pos.y == y) {
+                            out = '*';
+                            color = TERM_FG_BRIGHT_GREEN;
+                            drew = 1;
+                            break;
+                        }
                     }
                 }
                 // Remote bullets overlay (same world only)
@@ -330,6 +344,17 @@ void game_draw(void) {
                         if (g_remote_bullets[bi].active && g_remote_bullets[bi].worldX == curWorldX && g_remote_bullets[bi].worldY == curWorldY && g_remote_bullets[bi].pos.x == x && g_remote_bullets[bi].pos.y == y) {
                             out = '*';
                             color = TERM_FG_BRIGHT_GREEN;
+                            drew = 1;
+                            break;
+                        }
+                    }
+                }
+                // Remote enemies overlay on base tiles when in MP
+                if (!drew && g_mp_active) {
+                    for (int ei = 0; ei < MAX_REMOTE_ENEMIES; ++ei) {
+                        if (g_remote_enemies[ei].active && g_remote_enemies[ei].worldX == curWorldX && g_remote_enemies[ei].worldY == curWorldY && g_remote_enemies[ei].pos.x == x && g_remote_enemies[ei].pos.y == y) {
+                            out = 'E';
+                            color = TERM_FG_BRIGHT_RED;
                             drew = 1;
                             break;
                         }
@@ -350,11 +375,10 @@ void game_draw(void) {
         }
         if (pos < cap) frame[pos++] = '\n';
     }
-    // Overlay remote players for this map
+    // Overlay remote players for this map (includes self in MP)
     if (g_mp_active) {
         for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) {
             if (!g_remote_players[i].active) continue;
-            if (i == g_my_player_id) continue; // do not draw self
             if (g_remote_players[i].worldX == curWorldX && g_remote_players[i].worldY == curWorldY) {
                 int rx = g_remote_players[i].pos.x;
                 int ry = g_remote_players[i].pos.y;
@@ -396,5 +420,14 @@ void game_mp_set_tile(int wx, int wy, int x, int y, char tile) {
 
 int game_mp_get_cur_world_x(void) { return curWorldX; }
 int game_mp_get_cur_world_y(void) { return curWorldY; }
+
+void game_mp_set_self(int wx, int wy, int x, int y) {
+    if (wx < 0 || wx >= WORLD_W || wy < 0 || wy >= WORLD_H) return;
+    curWorldX = wx;
+    curWorldY = wy;
+    curMap = &world[curWorldY][curWorldX];
+    playerPos.x = x;
+    playerPos.y = y;
+}
 
 
