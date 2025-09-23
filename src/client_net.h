@@ -9,6 +9,7 @@ int client_connect(const char *addr_input); // addr_input: host or host:port
 void client_disconnect(void);
 void client_send_input(int dx, int dy, int shoot);
 void client_poll_messages(void); // updates g_remote_players
+void client_send_bye(void);
 
 #endif // CLIENT_NET_H
 

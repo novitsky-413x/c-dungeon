@@ -1,4 +1,5 @@
 #include "client_net.h"
+#include "game.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -13,6 +14,10 @@ static void parse_host_port(const char *in, char *host, size_t hostcap, char *po
     } else {
         strncpy(host, in, hostcap - 1); host[hostcap - 1] = '\0';
         strncpy(port, "5555", portcap - 1); port[portcap - 1] = '\0';
+    }
+    // Normalize localhost to IPv4 to match server's IPv4 listen by default
+    if (_stricmp(host, "localhost") == 0) {
+        strncpy(host, "127.0.0.1", hostcap - 1); host[hostcap - 1] = '\0';
     }
 }
 
@@ -45,7 +50,13 @@ void client_poll_messages(void) {
     int n = net_recv_nonblocking(g_sock, buf, sizeof(buf) - 1);
     if (n <= 0) return;
     buf[n] = '\0';
-    // Very simple protocol: lines like "PLAYER id wx wy x y color active" or "YOU id"
+    // Reset remote bullets; server sends a full snapshot each tick
+    for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) g_remote_bullets[i].active = 0;
+    // Protocol lines:
+    //  - YOU id
+    //  - PLAYER id wx wy x y color active
+    //  - TILE wx wy x y ch
+    //  - BULLET wx wy x y active
     char *p = buf;
     while (*p) {
         char *eol = strchr(p, '\n'); if (eol) *eol = '\0';
@@ -56,17 +67,49 @@ void client_poll_messages(void) {
             if (sscanf(p + 7, "%d %d %d %d %d %d %d", &id, &wx, &wy, &x, &y, &color, &active) == 7) {
                 if (id >= 0 && id < MAX_REMOTE_PLAYERS) {
                     g_remote_players[id].active = active;
-                    g_remote_players[id].worldX = wx;
-                    g_remote_players[id].worldY = wy;
-                    g_remote_players[id].pos.x = x;
-                    g_remote_players[id].pos.y = y;
-                    g_remote_players[id].colorIndex = color;
+                    if (active) {
+                        g_remote_players[id].worldX = wx;
+                        g_remote_players[id].worldY = wy;
+                        g_remote_players[id].pos.x = x;
+                        g_remote_players[id].pos.y = y;
+                        g_remote_players[id].colorIndex = color;
+                    }
+                }
+            }
+        } else if (strncmp(p, "TILE ", 5) == 0) {
+            int wx, wy, x, y; char ch;
+            if (sscanf(p + 5, "%d %d %d %d %c", &wx, &wy, &x, &y, &ch) == 5) {
+                game_mp_set_tile(wx, wy, x, y, ch);
+            }
+        } else if (strncmp(p, "BULLET ", 7) == 0) {
+            int wx, wy, x, y, active;
+            if (sscanf(p + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &active) == 5) {
+                // naive compaction: place/update first matching slot or first free
+                int slot = -1;
+                for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) {
+                    if (g_remote_bullets[i].active && g_remote_bullets[i].worldX == wx && g_remote_bullets[i].worldY == wy && g_remote_bullets[i].pos.x == x && g_remote_bullets[i].pos.y == y) { slot = i; break; }
+                }
+                if (slot < 0) {
+                    for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) { if (!g_remote_bullets[i].active) { slot = i; break; } }
+                }
+                if (slot >= 0) {
+                    g_remote_bullets[slot].active = active;
+                    g_remote_bullets[slot].worldX = wx;
+                    g_remote_bullets[slot].worldY = wy;
+                    g_remote_bullets[slot].pos.x = x;
+                    g_remote_bullets[slot].pos.y = y;
                 }
             }
         }
         if (!eol) break;
         p = eol + 1;
     }
+}
+
+void client_send_bye(void) {
+    if (g_sock < 0) return;
+    const char *bye = "BYE\n";
+    net_send_all(g_sock, bye, (int)strlen(bye));
 }
 
 

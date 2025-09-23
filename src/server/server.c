@@ -27,15 +27,29 @@ typedef struct {
 } Map;
 
 typedef struct {
+    int active;
+    int worldX;
+    int worldY;
+    Vec2 pos;
+    Direction dir;
+} SrvBullet;
+
+typedef struct {
     int connected;
     sock_t sock;
     int worldX, worldY;
     Vec2 pos;
     int color;
+    time_t lastActive;
+    char addr[64];
+    char port[16];
+    unsigned long long connId;
 } Client;
 
 static Map world[WORLD_H][WORLD_W];
 static Client clients[MAX_CLIENTS];
+static unsigned long long g_nextConnId = 1ULL;
+static SrvBullet bullets[MAX_REMOTE_BULLETS];
 
 static FILE *try_open_map(const char *prefix, int mx, int my) {
     char path[256]; snprintf(path, sizeof(path), "%smaps/x%d-y%d.txt", prefix, mx, my);
@@ -68,19 +82,33 @@ static void load_map_file(int mx, int my) {
 static int is_open(Map *m, int x, int y) { if (x<0||x>=MAP_WIDTH||y<0||y>=MAP_HEIGHT) return 0; return m->tiles[y][x] != '#'; }
 
 static void place_random(Client *c) {
-    for (int tries = 0; tries < 1000; ++tries) {
-        int wx = rand() % WORLD_W, wy = rand() % WORLD_H; int x = rand()%MAP_WIDTH, y = rand()%MAP_HEIGHT;
+    // Spawn everyone on the same map (0,0) so players can see each other immediately
+    for (int tries = 0; tries < 5000; ++tries) {
+        int wx = 0, wy = 0; int x = rand()%MAP_WIDTH, y = rand()%MAP_HEIGHT;
         if (!is_open(&world[wy][wx], x, y)) continue;
+        // avoid spawning on an already occupied tile by a connected client on same map
+        int occupied = 0;
+        for (int i = 0; i < MAX_CLIENTS; ++i) {
+            if (!clients[i].connected) continue;
+            if (clients[i].worldX == wx && clients[i].worldY == wy && clients[i].pos.x == x && clients[i].pos.y == y) { occupied = 1; break; }
+        }
+        if (occupied) continue;
         c->worldX = wx; c->worldY = wy; c->pos.x = x; c->pos.y = y; return;
     }
     c->worldX = 0; c->worldY = 0; c->pos.x = 1; c->pos.y = 1;
 }
 
 static void broadcast_state(void) {
-    char line[128]; char buf[4096]; int off = 0;
+    char line[128]; char buf[8192]; int off = 0;
     for (int i = 0; i < MAX_CLIENTS; ++i) {
-        if (!clients[i].connected) continue;
-        int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, 1);
+        int active = clients[i].connected ? 1 : 0;
+        int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active);
+        if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
+    }
+    // broadcast bullets
+    for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
+        if (!bullets[b].active) continue;
+        int n = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
         if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
     }
     for (int i = 0; i < MAX_CLIENTS; ++i) {
@@ -90,6 +118,35 @@ static void broadcast_state(void) {
 #else
         send(clients[i].sock, buf, off, 0);
 #endif
+    }
+}
+
+static void broadcast_tile(int wx, int wy, int x, int y, char ch) {
+    char line[64];
+    int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", wx, wy, x, y, ch);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (!clients[i].connected) continue;
+        send(clients[i].sock, line, n, 0);
+    }
+}
+
+static void step_bullets(void) {
+    for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) {
+        if (!bullets[i].active) continue;
+        int dx = 0, dy = 0;
+        switch (bullets[i].dir) { case DIR_UP: dy = -1; break; case DIR_DOWN: dy = 1; break; case DIR_LEFT: dx = -1; break; case DIR_RIGHT: dx = 1; break; }
+        int nx = bullets[i].pos.x + dx;
+        int ny = bullets[i].pos.y + dy;
+        if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) { bullets[i].active = 0; continue; }
+        Map *m = &world[bullets[i].worldY][bullets[i].worldX];
+        if (m->tiles[ny][nx] == '#') {
+            // simple destructible after 5 hits not tracked server-side; just break wall immediately for now
+            m->tiles[ny][nx] = '.';
+            broadcast_tile(bullets[i].worldX, bullets[i].worldY, nx, ny, '.');
+            bullets[i].active = 0;
+            continue;
+        }
+        bullets[i].pos.x = nx; bullets[i].pos.y = ny;
     }
 }
 
@@ -111,7 +168,8 @@ int main(int argc, char **argv) {
     if (listen(lsock, 16) != 0) { fprintf(stderr, "listen failed\n"); return 1; }
     freeaddrinfo(res);
 
-    printf("Server listening on port %s\n", port);
+    printf("[srv] Listening on port %s\n", port);
+    fflush(stdout);
 
     fd_set readfds;
     while (1) {
@@ -128,6 +186,18 @@ int main(int argc, char **argv) {
                 if (idx >= 0) {
                     clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx;
                     place_random(&clients[idx]);
+                    clients[idx].lastActive = time(NULL);
+                    char host[64] = {0}, serv[16] = {0};
+                    if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+                        strncpy(host, "?", sizeof(host)-1); strncpy(serv, "?", sizeof(serv)-1);
+                    }
+                    strncpy(clients[idx].addr, host, sizeof(clients[idx].addr)-1);
+                    strncpy(clients[idx].port, serv, sizeof(clients[idx].port)-1);
+                    clients[idx].connId = g_nextConnId++;
+                    printf("[srv] Client %d (cid=%llu) connected from %s:%s, color=%d, spawn=(%d,%d)@(%d,%d)\n",
+                           idx, clients[idx].connId, clients[idx].addr, clients[idx].port, clients[idx].color,
+                           clients[idx].worldX, clients[idx].worldY, clients[idx].pos.x, clients[idx].pos.y);
+                    fflush(stdout);
                     char you[32]; int n = snprintf(you, sizeof(you), "YOU %d\n", idx);
                     send(clients[idx].sock, you, n, 0);
                 } else {
@@ -137,6 +207,12 @@ int main(int argc, char **argv) {
 #else
                     close(cs);
 #endif
+                    char host[64] = {0}, serv[16] = {0};
+                    if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+                        strncpy(host, "?", sizeof(host)-1); strncpy(serv, "?", sizeof(serv)-1);
+                    }
+                    printf("[srv] Connection refused (server full) from %s:%s\n", host, serv);
+                    fflush(stdout);
                 }
             }
         }
@@ -144,15 +220,44 @@ int main(int argc, char **argv) {
         // Read inputs
         char buf[256];
         for (int i = 0; i < MAX_CLIENTS; ++i) {
-        if (!clients[i].connected) continue;
-        int n = (int)recv(clients[i].sock, buf, sizeof(buf)-1, 0);
-            if (n <= 0) continue; buf[n] = '\0';
+            if (!clients[i].connected) continue;
+            if (!FD_ISSET(clients[i].sock, &readfds)) continue; // only read if socket is ready
+            int n = (int)recv(clients[i].sock, buf, sizeof(buf)-1, 0);
+            if (n == 0) {
+                // orderly disconnect
+                printf("[srv] Client %d (cid=%llu) disconnected (socket closed) %s:%s\n", i, clients[i].connId, clients[i].addr, clients[i].port);
+                fflush(stdout);
+                clients[i].connected = 0;
+#ifdef _WIN32
+                closesocket(clients[i].sock);
+#else
+                close(clients[i].sock);
+#endif
+                clients[i].sock = 0;
+                continue;
+            }
+            if (n < 0) {
+                // no data
+                continue;
+            }
+            buf[n] = '\0';
             // parse simple commands: INPUT dx dy shoot
             char *p = buf;
             while (*p) {
                 char *eol = strchr(p, '\n'); if (eol) *eol = '\0';
                 int dx, dy, shoot;
-                if (sscanf(p, "INPUT %d %d %d", &dx, &dy, &shoot) == 3) {
+                if (strcmp(p, "BYE") == 0) {
+                    printf("[srv] Client %d (cid=%llu) disconnected (BYE) %s:%s\n", i, clients[i].connId, clients[i].addr, clients[i].port);
+                    fflush(stdout);
+                    clients[i].connected = 0;
+#ifdef _WIN32
+                    closesocket(clients[i].sock);
+#else
+                    close(clients[i].sock);
+#endif
+                    clients[i].sock = 0;
+                } else if (sscanf(p, "INPUT %d %d %d", &dx, &dy, &shoot) == 3) {
+                    clients[i].lastActive = time(NULL);
                     int nx = clients[i].pos.x + dx;
                     int ny = clients[i].pos.y + dy;
                     // clamp
@@ -169,12 +274,36 @@ int main(int argc, char **argv) {
                     if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT && is_open(&world[clients[i].worldY][clients[i].worldX], nx, ny)) {
                         clients[i].pos.x = nx; clients[i].pos.y = ny;
                     }
-                    (void)shoot; // shooting not yet handled server-side in this minimal version
+                    if (shoot) {
+                        // spawn a server bullet in player's direction inferred from dx/dy; default right
+                        Direction dir = DIR_RIGHT;
+                        if (dx < 0) dir = DIR_LEFT; else if (dx > 0) dir = DIR_RIGHT; else if (dy < 0) dir = DIR_UP; else if (dy > 0) dir = DIR_DOWN;
+                        int slot = -1; for (int bi = 0; bi < MAX_REMOTE_BULLETS; ++bi) if (!bullets[bi].active) { slot = bi; break; }
+                        if (slot >= 0) { bullets[slot].active = 1; bullets[slot].worldX = clients[i].worldX; bullets[slot].worldY = clients[i].worldY; bullets[slot].pos = clients[i].pos; bullets[slot].dir = dir; }
+                    }
                 }
                 if (!eol) break; p = eol + 1;
             }
         }
 
+        // Inactivity timeout (3 minutes)
+        time_t now = time(NULL);
+        for (int i = 0; i < MAX_CLIENTS; ++i) {
+            if (!clients[i].connected) continue;
+            if (now - clients[i].lastActive > 180) {
+                printf("[srv] Client %d (cid=%llu) disconnected (timeout) %s:%s\n", i, clients[i].connId, clients[i].addr, clients[i].port);
+                fflush(stdout);
+                clients[i].connected = 0;
+#ifdef _WIN32
+                closesocket(clients[i].sock);
+#else
+                close(clients[i].sock);
+#endif
+                clients[i].sock = 0;
+            }
+        }
+
+        step_bullets();
         broadcast_state();
     }
 

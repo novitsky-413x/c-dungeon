@@ -28,7 +28,7 @@ static void handleInput(void) {
         case 'a': case 'A': if (game_attempt_move_player(-1, 0)) { needsRedraw = 1; if (g_mp_active) client_send_input(-1, 0, 0); } break;
         case 'd': case 'D': if (game_attempt_move_player(1, 0))  { needsRedraw = 1; if (g_mp_active) client_send_input(1, 0, 0); } break;
         case ' ': game_player_shoot(); if (g_mp_active) client_send_input(0, 0, 1); needsRedraw = 1; break;
-        case 'q': case 'Q': game_running = 0; break;
+        case 'q': case 'Q': if (g_mp_active) client_send_bye(); game_running = 0; break;
         default: break;
     }
 }

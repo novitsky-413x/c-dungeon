@@ -6,6 +6,7 @@
 #define MAX_ENEMIES 5
 #define MAX_PROJECTILES 32
 #define MAX_REMOTE_PLAYERS 16
+#define MAX_REMOTE_BULLETS 64
 
 typedef struct {
     int x;
@@ -38,6 +39,13 @@ typedef struct {
     Vec2 pos;
     int colorIndex;
 } RemotePlayer;
+
+typedef struct {
+    int active;
+    int worldX;
+    int worldY;
+    Vec2 pos;
+} RemoteBullet;
 
 #endif // TYPES_H
 

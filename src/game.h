@@ -17,6 +17,11 @@ void game_player_shoot(void);
 int game_update_projectiles(void);
 int game_tick_status(void);
 
+// MP helpers (client-side): apply authoritative world changes from server
+void game_mp_set_tile(int wx, int wy, int x, int y, char tile);
+int game_mp_get_cur_world_x(void);
+int game_mp_get_cur_world_y(void);
+
 extern int game_running;
 extern int game_player_won;
 extern int game_tick_count;

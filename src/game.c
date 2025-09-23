@@ -315,13 +315,24 @@ void game_draw(void) {
                 color = TERM_FG_BRIGHT_RED; // enemies
             } else {
                 int drew = 0;
-                // Projectiles
+                // Projectiles (local)
                 for (int pi = 0; pi < MAX_PROJECTILES; ++pi) {
                     if (projectiles[pi].active && projectiles[pi].pos.x == x && projectiles[pi].pos.y == y) {
                         out = '*';
                         color = TERM_FG_BRIGHT_GREEN;
                         drew = 1;
                         break;
+                    }
+                }
+                // Remote bullets overlay (same world only)
+                if (!drew && g_mp_active) {
+                    for (int bi = 0; bi < MAX_REMOTE_BULLETS; ++bi) {
+                        if (g_remote_bullets[bi].active && g_remote_bullets[bi].worldX == curWorldX && g_remote_bullets[bi].worldY == curWorldY && g_remote_bullets[bi].pos.x == x && g_remote_bullets[bi].pos.y == y) {
+                            out = '*';
+                            color = TERM_FG_BRIGHT_GREEN;
+                            drew = 1;
+                            break;
+                        }
                     }
                 }
                 if (!drew) {
@@ -343,6 +354,7 @@ void game_draw(void) {
     if (g_mp_active) {
         for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) {
             if (!g_remote_players[i].active) continue;
+            if (i == g_my_player_id) continue; // do not draw self
             if (g_remote_players[i].worldX == curWorldX && g_remote_players[i].worldY == curWorldY) {
                 int rx = g_remote_players[i].pos.x;
                 int ry = g_remote_players[i].pos.y;
@@ -362,10 +374,27 @@ void game_draw(void) {
             }
         }
     }
-    n = snprintf(frame + pos, cap - pos, "\nLives: %d    Score: %d    Location: (%d,%d)\nUse WASD/Arrows to move, Space to shoot.\nFind purple W to win. Press Q to quit.\n", game_player_lives, game_score, curWorldX * MAP_WIDTH + playerPos.x, curWorldY * MAP_HEIGHT + playerPos.y);
+    // Ensure cursor is moved below the map before printing HUD
+    n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH", MAP_HEIGHT + 1, 1);
+    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+    n = snprintf(frame + pos, cap - pos, "Lives: %d    Score: %d    Location: (%d,%d)\nUse WASD/Arrows to move, Space to shoot.\nFind purple W to win. Press Q to quit.\n", game_player_lives, game_score, curWorldX * MAP_WIDTH + playerPos.x, curWorldY * MAP_HEIGHT + playerPos.y);
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
 }
+
+// --- MP helpers ---
+void game_mp_set_tile(int wx, int wy, int x, int y, char tile) {
+    if (wx < 0 || wx >= WORLD_W || wy < 0 || wy >= WORLD_H) return;
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return;
+    world[wy][wx].tiles[y][x] = tile;
+    if (wx == curWorldX && wy == curWorldY) {
+        // ensure curMap points to updated map
+        curMap = &world[curWorldY][curWorldX];
+    }
+}
+
+int game_mp_get_cur_world_x(void) { return curWorldX; }
+int game_mp_get_cur_world_y(void) { return curWorldY; }
 
 
