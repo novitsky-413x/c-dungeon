@@ -21,6 +21,9 @@ A tiny cross-platform terminal game written in C. Runs in PowerShell, bash, and 
   - Menu lets you choose Singleplayer or Multiplayer
   - In Multiplayer, enter `host[:port]` (default port 5555) to connect
   - Other players are rendered as colored `@` on your current map
+  - Server-authoritative movement; client disables local movement/enemy/bullet simulation when connected
+  - Server sends TILE updates for map changes (e.g., walls broken by bullets)
+  - Server broadcasts enemies and bullets each tick; client renders them as an overlay for the current map
 
 ## Layout
 ```
@@ -40,6 +43,27 @@ C:\Projects\c\dungeon
 │  └─ server\
 │     └─ server.c         # lightweight C server (multi-client state broadcast)
 ```
+
+## Quickstart
+- Build client and server (Linux/macOS):
+  ```bash
+  gcc src/*.c -o dungeon
+  gcc src/server/server.c -o server
+  ```
+- Build client and server (Windows, MSYS2/MinGW):
+  ```bash
+  gcc src\*.c -o dungeon.exe -lws2_32
+  gcc src\server\server.c -o server.exe -lws2_32
+  ```
+- Run singleplayer:
+  ```bash
+  ./dungeon
+  ```
+- Run multiplayer (two terminals):
+  ```bash
+  ./server 5555
+  ./dungeon  # choose Multiplayer, then enter 127.0.0.1:5555
+  ```
 
 ## Build
 You need a C compiler (GCC/Clang) and a terminal that supports ANSI (PowerShell 5+ or Windows Terminal; most Unix shells do).
@@ -106,22 +130,43 @@ The server searches for `maps/` relative to its working directory (`./maps/`, th
   - `X` restores lives to 3 and is consumed on pickup
   - `W` is the goal (ends game in singleplayer)
 
-## Multiplayer protocol (minimal, text)
-- Client → Server: `INPUT dx dy shoot\n`
-- Server → Client:
-  - `YOU id\n` (assigned once)
-  - `PLAYER id wx wy x y color active\n` (broadcast snapshots)
+## Multiplayer protocol (text, line-based)
+- Client → Server:
+  - `HELLO` (sent once on connect; informational)
+  - `INPUT dx dy shoot` where `dx`/`dy` in {-1,0,1}, `shoot` in {0,1}
+  - `BYE` (disconnect request)
+- Server → Client (snapshot each tick; lines may be interleaved):
+  - `YOU id` (assigned once upon connect)
+  - `PLAYER id wx wy x y color active` for up to 16 players
+  - `BULLET wx wy x y active` for active remote bullets
+  - `ENEMY wx wy x y hp` for visible enemies (hp>0 means alive)
+  - `TILE wx wy x y ch` to mutate a map tile (e.g., breaking a wall `#`→`.`)
+- Server → Client (refusal):
+  - `FULL` when server is at capacity
 
-Current server implements synchronized positions/broadcast. PvP damage and bullets server-side can be added next.
+Authoritative rules in MP:
+- Movement and position are set by the server (client input is advisory).
+- Enemies and bullets are simulated on the server; client only renders them.
+- Wall destruction in MP is immediate on bullet impact and is propagated via `TILE` updates.
 
 ## Notes
 - ANSI on Windows: enabled via Virtual Terminal Processing; PowerShell or Windows Terminal recommended.
 - Performance: simple fixed timestep loop; CPU usage is low.
 - Cross-platform: no external deps.
+- Prebuilt binaries (`dungeon`, `server`, `.exe`) may be present in the repo root for convenience.
 
-## Roadmap (optional)
-- Server-side bullets and damage, respawn rules
-- Chat/latency smoothing
-- Persistence and high scores
+## Roadmap
+- Short-term
+  - Server-enforced player health/damage and respawn rules in MP
+  - Make wall durability consistent in MP (track damage counts; not immediate break)
+  - Connection quality: basic rate limiting, idle pings, and disconnect reasons
+- Mid-term
+  - Latency smoothing: simple client-side interpolation/extrapolation of remote players/bullets
+  - Configurable world size and dynamic map loading
+  - Quality-of-life: Makefile/CMake, Dockerized server, CI build
+- Long-term
+  - Persistence (high scores, per-user stats)
+  - Optional chat and emotes
+  - Cross-platform packaging (static builds where feasible)
 
 Enjoy exploring the dungeon!
