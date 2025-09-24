@@ -49,6 +49,10 @@ typedef struct {
     Vec2 pos;
     int color;
     Direction facing;
+    int hp;
+    int invincibleTicks; // 3s at 20 ticks/sec => 60 ticks
+    int superTicks; // 5s at 20 ticks/sec => 100 ticks
+    int shootCooldown; // ticks until next allowed shot
     time_t lastActive;
     char addr[64];
     char port[16];
@@ -100,15 +104,18 @@ static void load_map_file(int mx, int my) {
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         if (!fgets(line, sizeof(line), f)) { for (; y < MAP_HEIGHT; ++y) { for (int x = 0; x < MAP_WIDTH; ++x) m->tiles[y][x] = '#'; m->tiles[y][MAP_WIDTH] = '\0'; } break; }
         int len = (int)strcspn(line, "\r\n");
-        for (int x = 0; x < MAP_WIDTH; ++x) { char c = (x < len) ? line[x] : '#'; if (c!='#'&&c!='.'&&c!='X'&&c!='W'&&c!='@') c='.'; m->tiles[y][x] = c; }
+        for (int x = 0; x < MAP_WIDTH; ++x) { char c = (x < len) ? line[x] : '#'; if (c!='#'&&c!='.'&&c!='X'&&c!='W'&&c!='@'&&c!='S') c='.'; m->tiles[y][x] = c; }
         m->tiles[y][MAP_WIDTH] = '\0';
     }
     fclose(f);
 }
 
 static int is_open(Map *m, int x, int y) { if (x<0||x>=MAP_WIDTH||y<0||y>=MAP_HEIGHT) return 0; return m->tiles[y][x] != '#'; }
+static int map_has_spawn(int mx, int my) { for (int y = 0; y < MAP_HEIGHT; ++y) for (int x = 0; x < MAP_WIDTH; ++x) if (world[my][mx].tiles[y][x] == 'S') return 1; return 0; }
+static int find_spawn_in_map(int mx, int my, int *sx, int *sy) { for (int y = 0; y < MAP_HEIGHT; ++y) for (int x = 0; x < MAP_WIDTH; ++x) if (world[my][mx].tiles[y][x] == 'S') { *sx = x; *sy = y; return 1; } return 0; }
 
 static void spawn_enemies_for_map(int mx, int my, int count) {
+    if (map_has_spawn(mx, my)) { for (int i = 0; i < MAX_ENEMIES; ++i) enemies[my][mx][i].active = 0; return; }
     if (count > MAX_ENEMIES) count = MAX_ENEMIES;
     for (int i = 0; i < MAX_ENEMIES; ++i) enemies[my][mx][i].active = 0;
 
@@ -148,28 +155,45 @@ static void spawn_enemies_for_map(int mx, int my, int count) {
     }
 }
 
-static void place_random(Client *c) {
-    // Spawn everyone on the same map (0,0) so players can see each other immediately
-    for (int tries = 0; tries < 5000; ++tries) {
-        int wx = 0, wy = 0; int x = rand()%MAP_WIDTH, y = rand()%MAP_HEIGHT;
-        if (!is_open(&world[wy][wx], x, y)) continue;
-        // avoid spawning on an already occupied tile by a connected client on same map
-        int occupied = 0;
-        for (int i = 0; i < MAX_CLIENTS; ++i) {
-            if (!clients[i].connected) continue;
-            if (clients[i].worldX == wx && clients[i].worldY == wy && clients[i].pos.x == x && clients[i].pos.y == y) { occupied = 1; break; }
+static void place_near_spawn(Client *c) {
+    int smx = 0, smy = 0, sx = 1, sy = 1; int foundMap = 0;
+    for (int my = 0; my < WORLD_H && !foundMap; ++my) {
+        for (int mx = 0; mx < WORLD_W && !foundMap; ++mx) {
+            int tx, ty; if (find_spawn_in_map(mx, my, &tx, &ty)) { smx = mx; smy = my; sx = tx; sy = ty; foundMap = 1; }
         }
-        if (occupied) continue;
-        c->worldX = wx; c->worldY = wy; c->pos.x = x; c->pos.y = y; return;
     }
-    c->worldX = 0; c->worldY = 0; c->pos.x = 1; c->pos.y = 1;
+    int bestx = sx, besty = sy;
+    for (int r = 0; r <= MAP_WIDTH + MAP_HEIGHT; ++r) {
+        for (int dy = -r; dy <= r; ++dy) {
+            int dxs[2] = { -r, r };
+            for (int k = 0; k < 2; ++k) {
+                int dx = dxs[k]; int tx = sx + dx; int ty = sy + dy;
+                if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
+                if (!is_open(&world[smy][smx], tx, ty)) continue;
+                int occupied = 0; for (int i = 0; i < MAX_CLIENTS; ++i) { if (!clients[i].connected) continue; if (clients[i].worldX == smx && clients[i].worldY == smy && clients[i].pos.x == tx && clients[i].pos.y == ty) { occupied = 1; break; } }
+                if (!occupied) { bestx = tx; besty = ty; goto found; }
+            }
+        }
+        for (int dx = -r+1; dx <= r-1; ++dx) {
+            int dys[2] = { -r, r };
+            for (int k = 0; k < 2; ++k) {
+                int dy = dys[k]; int tx = sx + dx; int ty = sy + dy;
+                if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
+                if (!is_open(&world[smy][smx], tx, ty)) continue;
+                int occupied = 0; for (int i = 0; i < MAX_CLIENTS; ++i) { if (!clients[i].connected) continue; if (clients[i].worldX == smx && clients[i].worldY == smy && clients[i].pos.x == tx && clients[i].pos.y == ty) { occupied = 1; break; } }
+                if (!occupied) { bestx = tx; besty = ty; goto found; }
+            }
+        }
+    }
+found:
+    c->worldX = smx; c->worldY = smy; c->pos.x = bestx; c->pos.y = besty;
 }
 
 static void broadcast_state(void) {
     char line[128]; char buf[8192]; int off = 0;
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         int active = clients[i].connected ? 1 : 0;
-        int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active);
+        int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks);
         if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
     }
     // broadcast bullets
@@ -224,6 +248,29 @@ static void step_bullets(void) {
             if (e->pos.x == nx && e->pos.y == ny) {
                 if (e->hp > 0) e->hp--;
                 if (e->hp <= 0) e->active = 0;
+                bullets[i].active = 0;
+                goto bullet_continue;
+            }
+        }
+        // Check player hit (PvP)
+        for (int ci = 0; ci < MAX_CLIENTS; ++ci) {
+            if (!clients[ci].connected) continue;
+            if (clients[ci].worldX != bullets[i].worldX || clients[ci].worldY != bullets[i].worldY) continue;
+            if (clients[ci].pos.x == nx && clients[ci].pos.y == ny) {
+                // Skip damage on spawn map; otherwise apply and respawn if needed
+                if (!map_has_spawn(clients[ci].worldX, clients[ci].worldY)) {
+                    if (clients[ci].invincibleTicks <= 0 && clients[ci].hp > 0) {
+                        clients[ci].hp--;
+                        clients[ci].invincibleTicks = 60; // 3s at 20 FPS (server tick ~50ms)
+                        if (clients[ci].hp <= 0) {
+                            place_near_spawn(&clients[ci]);
+                            clients[ci].hp = 3;
+                            clients[ci].superTicks = 0;
+                            clients[ci].shootCooldown = 0;
+                            clients[ci].invincibleTicks = 60;
+                        }
+                    }
+                }
                 bullets[i].active = 0;
                 goto bullet_continue;
             }
@@ -305,8 +352,12 @@ int main(int argc, char **argv) {
                 int idx = -1; for (int i = 0; i < MAX_CLIENTS; ++i) if (!clients[i].connected) { idx = i; break; }
                 if (idx >= 0) {
                     clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx;
-                    place_random(&clients[idx]);
+                    place_near_spawn(&clients[idx]);
                     clients[idx].facing = DIR_RIGHT;
+                    clients[idx].hp = 3;
+                    clients[idx].invincibleTicks = 0;
+                    clients[idx].superTicks = 0;
+                    clients[idx].shootCooldown = 0;
                     clients[idx].lastActive = time(NULL);
                     char host[64] = {0}, serv[16] = {0};
                     if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
@@ -397,14 +448,34 @@ int main(int argc, char **argv) {
                         if (clients[i].worldY < WORLD_H-1 && is_open(&world[clients[i].worldY+1][clients[i].worldX], nx, 0)) { clients[i].worldY++; ny = 0; }
                     }
                     if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT && is_open(&world[clients[i].worldY][clients[i].worldX], nx, ny)) {
-                        clients[i].pos.x = nx; clients[i].pos.y = ny;
+                        // Disallow stepping into a tile occupied by another player in the same map
+                        int occupied = 0;
+                        for (int pj = 0; pj < MAX_CLIENTS; ++pj) {
+                            if (pj == i) continue;
+                            if (!clients[pj].connected) continue;
+                            if (clients[pj].worldX == clients[i].worldX && clients[pj].worldY == clients[i].worldY && clients[pj].pos.x == nx && clients[pj].pos.y == ny) {
+                                occupied = 1; break;
+                            }
+                        }
+                        if (!occupied) {
+                            clients[i].pos.x = nx; clients[i].pos.y = ny;
+                        }
                     }
                     if (shoot) {
                         // spawn a server bullet in player's facing; if dx/dy provided, infer and override
-                        Direction dir = clients[i].facing;
-                        if (dx < 0) dir = DIR_LEFT; else if (dx > 0) dir = DIR_RIGHT; else if (dy < 0) dir = DIR_UP; else if (dy > 0) dir = DIR_DOWN;
-                        int slot = -1; for (int bi = 0; bi < MAX_REMOTE_BULLETS; ++bi) if (!bullets[bi].active) { slot = bi; break; }
-                        if (slot >= 0) { bullets[slot].active = 1; bullets[slot].worldX = clients[i].worldX; bullets[slot].worldY = clients[i].worldY; bullets[slot].pos = clients[i].pos; bullets[slot].dir = dir; }
+                        int allow = 0;
+                        if (clients[i].superTicks > 0) {
+                            allow = 1; // spammable during super
+                        } else if (clients[i].shootCooldown <= 0) {
+                            allow = 1;
+                            clients[i].shootCooldown = 6; // ~300ms at 50ms tick
+                        }
+                        if (allow) {
+                            Direction dir = clients[i].facing;
+                            if (dx < 0) dir = DIR_LEFT; else if (dx > 0) dir = DIR_RIGHT; else if (dy < 0) dir = DIR_UP; else if (dy > 0) dir = DIR_DOWN;
+                            int slot = -1; for (int bi = 0; bi < MAX_REMOTE_BULLETS; ++bi) if (!bullets[bi].active) { slot = bi; break; }
+                            if (slot >= 0) { bullets[slot].active = 1; bullets[slot].worldX = clients[i].worldX; bullets[slot].worldY = clients[i].worldY; bullets[slot].pos = clients[i].pos; bullets[slot].dir = dir; }
+                        }
                     }
                 }
                 if (!eol) break; p = eol + 1;
@@ -430,6 +501,13 @@ int main(int argc, char **argv) {
 
         step_bullets();
         step_enemies();
+        // tick down timers
+        for (int i = 0; i < MAX_CLIENTS; ++i) {
+            if (!clients[i].connected) continue;
+            if (clients[i].invincibleTicks > 0) clients[i].invincibleTicks--;
+            if (clients[i].superTicks > 0) clients[i].superTicks--;
+            if (clients[i].shootCooldown > 0) clients[i].shootCooldown--;
+        }
         broadcast_state();
     }
 

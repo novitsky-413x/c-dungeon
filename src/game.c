@@ -32,6 +32,8 @@ int game_tick_count = 0;
 int game_player_lives = 3;
 int game_score = 0;
 static int invincible_frames = 0; // frames remaining of invincibility
+static int super_frames = 0; // frames remaining of super attack (spammable)
+static int shoot_cooldown_frames = 0; // frames until next allowed shot
 
 // External maps will be loaded from files instead of default hardcoded map
 
@@ -60,7 +62,7 @@ static void load_map_file(int mx, int my) {
             int len = (int)strcspn(line, "\r\n");
         for (int x = 0; x < MAP_WIDTH; ++x) {
                 char c = (x < len) ? line[x] : '#';
-                if (c != '#' && c != '.' && c != 'X' && c != 'W' && c != '@') c = '.';
+                if (c != '#' && c != '.' && c != 'X' && c != 'W' && c != '@' && c != 'S') c = '.';
                 m->tiles[y][x] = c;
             }
             m->tiles[y][MAP_WIDTH] = '\0';
@@ -75,11 +77,26 @@ static void load_map_file(int mx, int my) {
 static void world_init(void) {
     for (int y = 0; y < WORLD_H; ++y) for (int x = 0; x < WORLD_W; ++x) load_map_file(x, y);
     curWorldX = 0; curWorldY = 0; curMap = &world[curWorldY][curWorldX];
-    // In singleplayer, honor '@' spawn. In multiplayer, server is authoritative for our spawn.
+    // In singleplayer, prefer global 'S' across all maps; fallback to '@' in current map.
+    // In multiplayer, server is authoritative for our spawn.
     if (!g_mp_active) {
-        int found = 0;
-        for (int y = 0; y < MAP_HEIGHT && !found; ++y) for (int x = 0; x < MAP_WIDTH && !found; ++x) if (curMap->tiles[y][x] == '@') { playerPos.x = x; playerPos.y = y; curMap->tiles[y][x] = '.'; found = 1; }
-        if (!found) { playerPos.x = 1; playerPos.y = 1; }
+        int found = 0; int smx = 0, smy = 0, sx = 1, sy = 1;
+        for (int wy = 0; wy < WORLD_H && !found; ++wy) {
+            for (int wx = 0; wx < WORLD_W && !found; ++wx) {
+                MapState *m = &world[wy][wx];
+                for (int y = 0; y < MAP_HEIGHT && !found; ++y) {
+                    for (int x = 0; x < MAP_WIDTH && !found; ++x) {
+                        if (m->tiles[y][x] == 'S') { smx = wx; smy = wy; sx = x; sy = y; found = 1; }
+                    }
+                }
+            }
+        }
+        if (found) { curWorldX = smx; curWorldY = smy; curMap = &world[curWorldY][curWorldX]; playerPos.x = sx; playerPos.y = sy; }
+        else {
+            int foundAt = 0;
+            for (int y = 0; y < MAP_HEIGHT && !foundAt; ++y) for (int x = 0; x < MAP_WIDTH && !foundAt; ++x) if (curMap->tiles[y][x] == '@') { playerPos.x = x; playerPos.y = y; curMap->tiles[y][x] = '.'; foundAt = 1; }
+            if (!foundAt) { playerPos.x = 1; playerPos.y = 1; }
+        }
     } else {
         // Placeholder until server snapshot arrives
         playerPos.x = 0; playerPos.y = 0;
@@ -106,6 +123,14 @@ int game_is_blocked(int x, int y) {
 void game_spawn_enemies(int count) {
     if (count > MAX_ENEMIES) count = MAX_ENEMIES;
     if (curMap->initialized) return;
+    // Do not spawn enemies on the starting map (map containing 'S')
+    int hasSpawn = 0;
+    for (int y = 0; y < MAP_HEIGHT && !hasSpawn; ++y) {
+        for (int x = 0; x < MAP_WIDTH && !hasSpawn; ++x) {
+            if (curMap->tiles[y][x] == 'S') hasSpawn = 1;
+        }
+    }
+    if (hasSpawn) { curMap->numEnemies = 0; curMap->initialized = 1; return; }
     curMap->numEnemies = count;
     for (int i = 0; i < curMap->numEnemies; ++i) {
         curMap->enemies[i].isAlive = 1;
@@ -194,54 +219,39 @@ void game_check_win_lose(void) {
         // No local win/lose logic in MP mode
         return;
     }
-    if (game_is_enemy_at(playerPos.x, playerPos.y) && invincible_frames <= 0) {
-        // lose a life and respawn at current map's spawn '@' if available; otherwise top-left open
-        game_player_lives--;
+    // Immune to enemy contact on spawn map
+    int onSpawnMap = 0; for (int sy = 0; sy < MAP_HEIGHT && !onSpawnMap; ++sy) for (int sx = 0; sx < MAP_WIDTH && !onSpawnMap; ++sx) if (curMap->tiles[sy][sx] == 'S') onSpawnMap = 1;
+    if (game_is_enemy_at(playerPos.x, playerPos.y) && !onSpawnMap && invincible_frames <= 0) {
+        // decrement HP and grant temporary invincibility
+        if (game_player_lives > 0) game_player_lives--;
         if (game_player_lives <= 0) {
-            // Reset lives and score, and teleport to a random different map
-            game_player_lives = 3;
-            game_score = 0;
-            int fromX = curWorldX, fromY = curWorldY;
-            int placedGlobal = 0;
-            int tries = 100;
-            while (tries-- > 0 && !placedGlobal) {
-                int rx = rand() % WORLD_W;
-                int ry = rand() % WORLD_H;
-                if (rx == fromX && ry == fromY) continue;
-                MapState *m = &world[ry][rx];
-                for (int y2 = 0; y2 < MAP_HEIGHT && !placedGlobal; ++y2) {
-                    for (int x2 = 0; x2 < MAP_WIDTH && !placedGlobal; ++x2) {
-                        char c = m->tiles[y2][x2];
-                        if (c == '.' || c == '@') { curWorldX = rx; curWorldY = ry; curMap = m; playerPos.x = x2; playerPos.y = y2; placedGlobal = 1; }
-                    }
-                }
-            }
-            if (!placedGlobal) {
-                // Fallback deterministic search
-                for (int ry = 0; ry < WORLD_H && !placedGlobal; ++ry) {
-                    for (int rx = 0; rx < WORLD_W && !placedGlobal; ++rx) {
-                        if (rx == fromX && ry == fromY) continue;
-                        MapState *m = &world[ry][rx];
-                        for (int y2 = 0; y2 < MAP_HEIGHT && !placedGlobal; ++y2) {
-                            for (int x2 = 0; x2 < MAP_WIDTH && !placedGlobal; ++x2) {
-                                char c = m->tiles[y2][x2];
-                                if (c == '.' || c == '@') { curWorldX = rx; curWorldY = ry; curMap = m; playerPos.x = x2; playerPos.y = y2; placedGlobal = 1; }
-                            }
+            // Respawn at nearest/global spawn 'S', reset HP and score
+            int found = 0; int sx = 1, sy = 1; int smx = curWorldX, smy = curWorldY;
+            for (int my = 0; my < WORLD_H && !found; ++my) {
+                for (int mx = 0; mx < WORLD_W && !found; ++mx) {
+                    for (int yy = 0; yy < MAP_HEIGHT && !found; ++yy) {
+                        for (int xx = 0; xx < MAP_WIDTH && !found; ++xx) {
+                            if (world[my][mx].tiles[yy][xx] == 'S') { smx = mx; smy = my; sx = xx; sy = yy; found = 1; }
                         }
                     }
                 }
             }
+            curWorldX = smx; curWorldY = smy; curMap = &world[curWorldY][curWorldX];
+            playerPos.x = sx; playerPos.y = sy;
+            game_player_lives = 3;
+            game_score = 0;
             for (int i = 0; i < MAX_PROJECTILES; ++i) projectiles[i].active = 0;
-            // continue running
+            invincible_frames = 180;
             return;
         }
-        // Remain in place, grant 3 seconds invincibility (~180 frames at 60 FPS)
         invincible_frames = 180;
         return;
     }
     // Restore lives when stepping on 'X'
     if (curMap && curMap->tiles[playerPos.y][playerPos.x] == 'X') {
         if (game_player_lives < 3) game_player_lives = 3;
+        super_frames = 300; // 5s at 60 FPS
+        invincible_frames = 180; // 3s at 60 FPS
         curMap->tiles[playerPos.y][playerPos.x] = '.'; // consume the X
     }
     if (curMap && curMap->tiles[playerPos.y][playerPos.x] == 'W') { game_running = 0; game_player_won = 1; }
@@ -259,11 +269,14 @@ static void damage_wall(int x, int y) {
 }
 
 void game_player_shoot(void) {
+    if (g_mp_active) return; // client doesn't fire locally in MP
+    if (super_frames <= 0 && shoot_cooldown_frames > 0) return;
     for (int i = 0; i < MAX_PROJECTILES; ++i) {
         if (!projectiles[i].active) {
             projectiles[i].active = 1;
             projectiles[i].pos = playerPos;
             projectiles[i].dir = playerFacing;
+            if (super_frames <= 0) shoot_cooldown_frames = 12; // ~200ms at 60 FPS
             return;
         }
     }
@@ -303,6 +316,8 @@ int game_update_projectiles(void) {
 int game_tick_status(void) {
     int changed = 0;
     if (invincible_frames > 0) { invincible_frames--; changed = 1; }
+    if (super_frames > 0) { super_frames--; changed = 1; }
+    if (shoot_cooldown_frames > 0) { shoot_cooldown_frames--; }
     return changed;
 }
 
@@ -373,7 +388,9 @@ void game_draw(void) {
             n = snprintf(frame + pos, cap - pos, "%s%c%s", color, out, TERM_SGR_RESET);
             if (n > 0) { pos += n; if (pos > cap) pos = cap; }
         }
-        if (pos < cap) frame[pos++] = '\n';
+        // Clear to end of line to avoid leftover characters from previous screens
+        n = snprintf(frame + pos, cap - pos, "\x1b[K\n");
+        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
     }
     // Overlay remote players for this map (includes self in MP)
     if (g_mp_active) {
@@ -401,7 +418,13 @@ void game_draw(void) {
     // Ensure cursor is moved below the map before printing HUD
     n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH", MAP_HEIGHT + 1, 1);
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }
-    n = snprintf(frame + pos, cap - pos, "Lives: %d    Score: %d    Location: (%d,%d)\nUse WASD/Arrows to move, Space to shoot.\nFind purple W to win. Press Q to quit.\n", game_player_lives, game_score, curWorldX * MAP_WIDTH + playerPos.x, curWorldY * MAP_HEIGHT + playerPos.y);
+    if (g_mp_active) {
+        int myhp = 0;
+        if (g_my_player_id >= 0 && g_my_player_id < MAX_REMOTE_PLAYERS && g_remote_players[g_my_player_id].active) myhp = g_remote_players[g_my_player_id].hp;
+        n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d    Location: (%d,%d)\n\x1b[KUse WASD/Arrows to move, Space to shoot.\n\x1b[KPress Q to quit.\n", myhp, curWorldX * MAP_WIDTH + playerPos.x, curWorldY * MAP_HEIGHT + playerPos.y);
+    } else {
+        n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d    Score: %d    Location: (%d,%d)\n\x1b[KUse WASD/Arrows to move, Space to shoot.\n\x1b[KFind purple W to win. Press Q to quit.\n", game_player_lives, game_score, curWorldX * MAP_WIDTH + playerPos.x, curWorldY * MAP_HEIGHT + playerPos.y);
+    }
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);

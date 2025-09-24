@@ -39,6 +39,9 @@ typedef struct {
     int worldY;
     Vec2 pos;
     int colorIndex;
+    int hp;
+    int invincibleTicks;
+    int superTicks;
 } RemotePlayer;
 
 typedef struct {
