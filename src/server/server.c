@@ -48,6 +48,7 @@ typedef struct {
     int worldX, worldY;
     Vec2 pos;
     int color;
+    Direction facing;
     time_t lastActive;
     char addr[64];
     char port[16];
@@ -288,6 +289,7 @@ int main(int argc, char **argv) {
                 if (idx >= 0) {
                     clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx;
                     place_random(&clients[idx]);
+                    clients[idx].facing = DIR_RIGHT;
                     clients[idx].lastActive = time(NULL);
                     char host[64] = {0}, serv[16] = {0};
                     if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
@@ -360,6 +362,8 @@ int main(int argc, char **argv) {
                     clients[i].sock = 0;
                 } else if (sscanf(p, "INPUT %d %d %d", &dx, &dy, &shoot) == 3) {
                     clients[i].lastActive = time(NULL);
+                    // update facing if a directional input was provided, even if movement is blocked
+                    if (dx < 0) clients[i].facing = DIR_LEFT; else if (dx > 0) clients[i].facing = DIR_RIGHT; else if (dy < 0) clients[i].facing = DIR_UP; else if (dy > 0) clients[i].facing = DIR_DOWN;
                     int nx = clients[i].pos.x + dx;
                     int ny = clients[i].pos.y + dy;
                     // clamp
@@ -377,8 +381,8 @@ int main(int argc, char **argv) {
                         clients[i].pos.x = nx; clients[i].pos.y = ny;
                     }
                     if (shoot) {
-                        // spawn a server bullet in player's direction inferred from dx/dy; default right
-                        Direction dir = DIR_RIGHT;
+                        // spawn a server bullet in player's facing; if dx/dy provided, infer and override
+                        Direction dir = clients[i].facing;
                         if (dx < 0) dir = DIR_LEFT; else if (dx > 0) dir = DIR_RIGHT; else if (dy < 0) dir = DIR_UP; else if (dy > 0) dir = DIR_DOWN;
                         int slot = -1; for (int bi = 0; bi < MAX_REMOTE_BULLETS; ++bi) if (!bullets[bi].active) { slot = bi; break; }
                         if (slot >= 0) { bullets[slot].active = 1; bullets[slot].worldX = clients[i].worldX; bullets[slot].worldY = clients[i].worldY; bullets[slot].pos = clients[i].pos; bullets[slot].dir = dir; }

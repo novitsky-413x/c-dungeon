@@ -98,7 +98,7 @@ int main(void) {
     while (game_running) {
         double frameStart = now_ms();
         handleInput();
-        if (g_mp_active) client_poll_messages();
+        if (g_mp_active) { if (client_poll_messages()) needsRedraw = 1; }
         if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
         if (game_update_projectiles()) needsRedraw = 1;
         if (game_tick_status()) needsRedraw = 1;

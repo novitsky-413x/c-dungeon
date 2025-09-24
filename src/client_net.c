@@ -50,11 +50,12 @@ void client_send_input(int dx, int dy, int shoot) {
     net_send_all(g_sock, buf, n);
 }
 
-void client_poll_messages(void) {
-    if (g_sock < 0) return;
+int client_poll_messages(void) {
+    int changed = 0;
+    if (g_sock < 0) return 0;
     char buf[2048];
     int n = net_recv_nonblocking(g_sock, buf, sizeof(buf) - 1);
-    if (n <= 0) return;
+    if (n <= 0) return 0;
     buf[n] = '\0';
     // Reset remote bullets; server sends a full snapshot each tick
     for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) g_remote_bullets[i].active = 0;
@@ -70,6 +71,7 @@ void client_poll_messages(void) {
         char *eol = strchr(p, '\n'); if (eol) *eol = '\0';
         if (strncmp(p, "YOU ", 4) == 0) {
             g_my_player_id = atoi(p + 4);
+            changed = 1;
         } else if (strncmp(p, "PLAYER ", 7) == 0) {
             int id, wx, wy, x, y, color, active;
             if (sscanf(p + 7, "%d %d %d %d %d %d %d", &id, &wx, &wy, &x, &y, &color, &active) == 7) {
@@ -85,6 +87,7 @@ void client_poll_messages(void) {
                             // Apply server-authoritative position/world for ourself
                             game_mp_set_self(wx, wy, x, y);
                         }
+                        changed = 1;
                     }
                 }
             }
@@ -92,6 +95,7 @@ void client_poll_messages(void) {
             int wx, wy, x, y; char ch;
             if (sscanf(p + 5, "%d %d %d %d %c", &wx, &wy, &x, &y, &ch) == 5) {
                 game_mp_set_tile(wx, wy, x, y, ch);
+                changed = 1;
             }
         } else if (strncmp(p, "BULLET ", 7) == 0) {
             int wx, wy, x, y, active;
@@ -110,6 +114,7 @@ void client_poll_messages(void) {
                     g_remote_bullets[slot].worldY = wy;
                     g_remote_bullets[slot].pos.x = x;
                     g_remote_bullets[slot].pos.y = y;
+                    changed = 1;
                 }
             }
         } else if (strncmp(p, "ENEMY ", 7) == 0) {
@@ -129,12 +134,14 @@ void client_poll_messages(void) {
                     g_remote_enemies[slot].pos.x = x;
                     g_remote_enemies[slot].pos.y = y;
                     g_remote_enemies[slot].hp = hp;
+                    changed = 1;
                 }
             }
         }
         if (!eol) break;
         p = eol + 1;
     }
+    return changed;
 }
 
 void client_send_bye(void) {
