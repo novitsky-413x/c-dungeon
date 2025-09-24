@@ -42,6 +42,7 @@ typedef struct {
     int hp;
     int invincibleTicks;
     int superTicks;
+    int score;
 } RemotePlayer;
 
 typedef struct {

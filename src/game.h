@@ -11,6 +11,7 @@ int game_is_enemy_at(int x, int y);
 int game_attempt_move_player(int dx, int dy);
 void game_check_win_lose(void);
 void game_draw(void);
+void game_draw_loading(int tick);
 
 // Shooting API
 void game_player_shoot(void);

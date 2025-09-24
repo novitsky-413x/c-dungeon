@@ -99,12 +99,26 @@ int main(void) {
     while (game_running) {
         double frameStart = now_ms();
         handleInput();
-        if (g_mp_active) { if (client_poll_messages()) needsRedraw = 1; }
-        if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
-        if (game_update_projectiles()) needsRedraw = 1;
-        if (game_tick_status()) needsRedraw = 1;
-        game_check_win_lose();
-        if (needsRedraw) { game_draw(); needsRedraw = 0; }
+        if (g_mp_active) {
+            extern int g_mp_joined;
+            if (client_poll_messages()) needsRedraw = 1;
+            if (!g_mp_joined) {
+                // Show loading screen (animate based on game_tick_count)
+                game_draw_loading(game_tick_count);
+            } else {
+                if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
+                if (game_update_projectiles()) needsRedraw = 1;
+                if (game_tick_status()) needsRedraw = 1;
+                game_check_win_lose();
+                if (needsRedraw) { game_draw(); needsRedraw = 0; }
+            }
+        } else {
+            if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
+            if (game_update_projectiles()) needsRedraw = 1;
+            if (game_tick_status()) needsRedraw = 1;
+            game_check_win_lose();
+            if (needsRedraw) { game_draw(); needsRedraw = 0; }
+        }
         const double targetFrameMs = 16.6667;
         double elapsed = now_ms() - frameStart;
         double remaining = targetFrameMs - elapsed;

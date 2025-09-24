@@ -105,8 +105,8 @@ int client_poll_messages(void) {
             g_my_player_id = atoi(line + 4);
             changed = 1;
         } else if (strncmp(line, "PLAYER ", 7) == 0) {
-            int id, wx, wy, x, y, color, active, hp, inv, sup;
-            int parsed = sscanf(line + 7, "%d %d %d %d %d %d %d %d %d %d", &id, &wx, &wy, &x, &y, &color, &active, &hp, &inv, &sup);
+            int id, wx, wy, x, y, color, active, hp, inv, sup, score;
+            int parsed = sscanf(line + 7, "%d %d %d %d %d %d %d %d %d %d %d", &id, &wx, &wy, &x, &y, &color, &active, &hp, &inv, &sup, &score);
             if (parsed >= 7) {
                 if (id >= 0 && id < MAX_REMOTE_PLAYERS) {
                     g_remote_players[id].active = active;
@@ -119,8 +119,11 @@ int client_poll_messages(void) {
                         if (parsed >= 8) g_remote_players[id].hp = hp; else g_remote_players[id].hp = 3;
                         if (parsed >= 9) g_remote_players[id].invincibleTicks = inv; else g_remote_players[id].invincibleTicks = 0;
                         if (parsed >= 10) g_remote_players[id].superTicks = sup; else g_remote_players[id].superTicks = 0;
+                        if (parsed >= 11) g_remote_players[id].score = score; else g_remote_players[id].score = 0;
                         if (id == g_my_player_id) {
                             game_mp_set_self(wx, wy, x, y);
+                            // We've received our first authoritative snapshot
+                            extern int g_mp_joined; g_mp_joined = 1;
                         }
                         changed = 1;
                     }

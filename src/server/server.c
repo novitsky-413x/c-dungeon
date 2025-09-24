@@ -33,6 +33,7 @@ typedef struct {
     int worldY;
     Vec2 pos;
     Direction dir;
+    int ownerId;
 } SrvBullet;
 
 typedef struct {
@@ -54,6 +55,7 @@ typedef struct {
     int invincibleTicks; // 3s at 20 ticks/sec => 60 ticks
     int superTicks; // 5s at 20 ticks/sec => 100 ticks
     int shootCooldown; // ticks until next allowed shot
+    int score;
     time_t lastActive;
     char addr[64];
     char port[16];
@@ -233,7 +235,7 @@ static void broadcast_state(void) {
     char line[128]; char buf[8192]; int off = 0;
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         int active = clients[i].connected ? 1 : 0;
-        int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks);
+        int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks, clients[i].score);
         if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
     }
     // broadcast bullets
@@ -288,7 +290,14 @@ static void step_bullets(void) {
             if (!e->active) continue;
             if (e->pos.x == nx && e->pos.y == ny) {
                 if (e->hp > 0) e->hp--;
-                if (e->hp <= 0) e->active = 0;
+                if (e->hp <= 0) {
+                    e->active = 0;
+                    // award score to bullet owner
+                    int owner = bullets[i].ownerId;
+                    if (owner >= 0 && owner < MAX_CLIENTS && clients[owner].connected) {
+                        clients[owner].score += 1;
+                    }
+                }
                 bullets[i].active = 0;
                 goto bullet_continue;
             }
@@ -304,6 +313,11 @@ static void step_bullets(void) {
                         clients[ci].hp--;
                         clients[ci].invincibleTicks = 60; // 3s at 20 FPS (server tick ~50ms)
                         if (clients[ci].hp <= 0) {
+                            // award 10 points to shooter on kill
+                            int owner = bullets[i].ownerId;
+                            if (owner >= 0 && owner < MAX_CLIENTS && clients[owner].connected) {
+                                clients[owner].score += 10;
+                            }
                             place_near_spawn(&clients[ci]);
                             clients[ci].hp = 3;
                             clients[ci].superTicks = 0;
@@ -433,6 +447,7 @@ int main(int argc, char **argv) {
                     clients[idx].invincibleTicks = 0;
                     clients[idx].superTicks = 0;
                     clients[idx].shootCooldown = 0;
+                    clients[idx].score = 0;
                     clients[idx].lastActive = time(NULL);
                     char host[64] = {0}, serv[16] = {0};
                     if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
@@ -549,7 +564,7 @@ int main(int argc, char **argv) {
                             Direction dir = clients[i].facing;
                             if (dx < 0) dir = DIR_LEFT; else if (dx > 0) dir = DIR_RIGHT; else if (dy < 0) dir = DIR_UP; else if (dy > 0) dir = DIR_DOWN;
                             int slot = -1; for (int bi = 0; bi < MAX_REMOTE_BULLETS; ++bi) if (!bullets[bi].active) { slot = bi; break; }
-                            if (slot >= 0) { bullets[slot].active = 1; bullets[slot].worldX = clients[i].worldX; bullets[slot].worldY = clients[i].worldY; bullets[slot].pos = clients[i].pos; bullets[slot].dir = dir; }
+                            if (slot >= 0) { bullets[slot].active = 1; bullets[slot].worldX = clients[i].worldX; bullets[slot].worldY = clients[i].worldY; bullets[slot].pos = clients[i].pos; bullets[slot].dir = dir; bullets[slot].ownerId = i; }
                         }
                     }
                 }
