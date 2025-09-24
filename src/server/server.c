@@ -24,6 +24,7 @@ typedef int sock_t;
 
 typedef struct {
     char tiles[MAP_HEIGHT][MAP_WIDTH + 1];
+    unsigned char wallDmg[MAP_HEIGHT][MAP_WIDTH];
 } Map;
 
 typedef struct {
@@ -106,6 +107,7 @@ static void load_map_file(int mx, int my) {
             for (int x = 0; x < MAP_WIDTH; ++x) m->tiles[y][x] = (y == 0 || y == MAP_HEIGHT-1 || x == 0 || x == MAP_WIDTH-1) ? '#' : '.';
             m->tiles[y][MAP_WIDTH] = '\0';
         }
+        memset(m->wallDmg, 0, sizeof(m->wallDmg));
         return;
     }
     char line[512];
@@ -116,6 +118,7 @@ static void load_map_file(int mx, int my) {
         m->tiles[y][MAP_WIDTH] = '\0';
     }
     fclose(f);
+    memset(m->wallDmg, 0, sizeof(m->wallDmg));
 }
 
 static int is_open(Map *m, int x, int y) { if (x<0||x>=MAP_WIDTH||y<0||y>=MAP_HEIGHT) return 0; return m->tiles[y][x] != '#'; }
@@ -285,9 +288,13 @@ static void step_bullets(void) {
             }
         }
         if (m->tiles[ny][nx] == '#') {
-            // simple destructible after 5 hits not tracked server-side; just break wall immediately for now
-            m->tiles[ny][nx] = '.';
-            broadcast_tile(bullets[i].worldX, bullets[i].worldY, nx, ny, '.');
+            if (m->wallDmg[ny][nx] < 4) {
+                m->wallDmg[ny][nx]++;
+            } else {
+                m->tiles[ny][nx] = '.';
+                m->wallDmg[ny][nx] = 0;
+                broadcast_tile(bullets[i].worldX, bullets[i].worldY, nx, ny, '.');
+            }
             bullets[i].active = 0;
             continue;
         }
@@ -538,9 +545,27 @@ int main(int argc, char **argv) {
             }
         }
 
-        step_bullets();
-        step_enemies();
+        static int tickCounter = 0;
+        if ((tickCounter % 2) == 0) step_bullets(); // ~10 steps/sec
+        if ((tickCounter % 3) == 0) step_enemies(); // ~6-7 steps/sec
         apply_enemy_contact_damage();
+        // handle pickups like 'X'
+        for (int ci = 0; ci < MAX_CLIENTS; ++ci) {
+            if (!clients[ci].connected) continue;
+            int wx = clients[ci].worldX;
+            int wy = clients[ci].worldY;
+            Map *m = &world[wy][wx];
+            int x = clients[ci].pos.x;
+            int y = clients[ci].pos.y;
+            if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
+            if (m->tiles[y][x] == 'X') {
+                if (clients[ci].hp < 3) clients[ci].hp = 3;
+                clients[ci].superTicks = 100; // 5s at 20 ticks/sec
+                clients[ci].invincibleTicks = 60; // 3s at 20 ticks/sec
+                m->tiles[y][x] = '.';
+                broadcast_tile(wx, wy, x, y, '.');
+            }
+        }
         // tick down timers
         for (int i = 0; i < MAX_CLIENTS; ++i) {
             if (!clients[i].connected) continue;
@@ -549,6 +574,7 @@ int main(int argc, char **argv) {
             if (clients[i].shootCooldown > 0) clients[i].shootCooldown--;
         }
         broadcast_state();
+        tickCounter++;
     }
 
     return 0;
