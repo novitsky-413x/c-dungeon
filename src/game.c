@@ -10,8 +10,8 @@ static Direction playerFacing = DIR_RIGHT;
 static Projectile projectiles[MAX_PROJECTILES];
 
 // World configuration (3x3 grid: x0-y0 to x2-y2)
-#define WORLD_W 3
-#define WORLD_H 3
+#define WORLD_W 9
+#define WORLD_H 9
 
 typedef struct {
     char tiles[MAP_HEIGHT][MAP_WIDTH + 1];
@@ -70,6 +70,24 @@ static void load_map_file(int mx, int my) {
         fclose(f);
     }
     memset(m->wallDmg, 0, sizeof(m->wallDmg));
+    // Ensure inter-map connectivity: center doors on interior edges
+    int midX = MAP_WIDTH / 2;
+    int midY = MAP_HEIGHT / 2;
+    if (mx > 0) curMap = curMap; // no-op to silence unused warnings in some compilers
+    if (mx > 0) m->tiles[midY][0] = '.';
+    if (mx < WORLD_W - 1) m->tiles[midY][MAP_WIDTH - 1] = '.';
+    if (my > 0) m->tiles[0][midX] = '.';
+    if (my < WORLD_H - 1) m->tiles[MAP_HEIGHT - 1][midX] = '.';
+    // Ensure a central spawn exists at world center if none provided by files
+    if (mx == WORLD_W / 2 && my == WORLD_H / 2) {
+        int hasS = 0;
+        for (int y = 0; y < MAP_HEIGHT && !hasS; ++y) {
+            for (int x = 0; x < MAP_WIDTH && !hasS; ++x) {
+                if (m->tiles[y][x] == 'S') hasS = 1;
+            }
+        }
+        if (!hasS) m->tiles[midY][midX] = 'S';
+    }
     m->numEnemies = 0;
     m->initialized = 0;
 }

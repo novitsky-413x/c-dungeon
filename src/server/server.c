@@ -18,8 +18,8 @@ typedef int sock_t;
 
 #include "../types.h"
 
-#define WORLD_W 3
-#define WORLD_H 3
+#define WORLD_W 9
+#define WORLD_H 9
 #define MAX_CLIENTS MAX_REMOTE_PLAYERS
 
 typedef struct {
@@ -103,11 +103,23 @@ static void load_map_file(int mx, int my) {
     if (!f) f = try_open_map("../../", mx, my);
     Map *m = &world[my][mx];
     if (!f) {
+        // Generate an all-dots map (including edges)
         for (int y = 0; y < MAP_HEIGHT; ++y) {
-            for (int x = 0; x < MAP_WIDTH; ++x) m->tiles[y][x] = (y == 0 || y == MAP_HEIGHT-1 || x == 0 || x == MAP_WIDTH-1) ? '#' : '.';
+            for (int x = 0; x < MAP_WIDTH; ++x) m->tiles[y][x] = '.';
             m->tiles[y][MAP_WIDTH] = '\0';
         }
         memset(m->wallDmg, 0, sizeof(m->wallDmg));
+        // Ensure inter-map connectivity on interior edges
+        int midX = MAP_WIDTH / 2;
+        int midY = MAP_HEIGHT / 2;
+        if (mx > 0) m->tiles[midY][0] = '.';
+        if (mx < WORLD_W - 1) m->tiles[midY][MAP_WIDTH - 1] = '.';
+        if (my > 0) m->tiles[0][midX] = '.';
+        if (my < WORLD_H - 1) m->tiles[MAP_HEIGHT - 1][midX] = '.';
+        // Ensure a central spawn exists at world center
+        if (mx == WORLD_W / 2 && my == WORLD_H / 2) {
+            m->tiles[midY][midX] = 'S';
+        }
         return;
     }
     char line[512];
@@ -119,6 +131,23 @@ static void load_map_file(int mx, int my) {
     }
     fclose(f);
     memset(m->wallDmg, 0, sizeof(m->wallDmg));
+    // Ensure inter-map connectivity on interior edges
+    int midX = MAP_WIDTH / 2;
+    int midY = MAP_HEIGHT / 2;
+    if (mx > 0) m->tiles[midY][0] = '.';
+    if (mx < WORLD_W - 1) m->tiles[midY][MAP_WIDTH - 1] = '.';
+    if (my > 0) m->tiles[0][midX] = '.';
+    if (my < WORLD_H - 1) m->tiles[MAP_HEIGHT - 1][midX] = '.';
+    // Ensure a central spawn exists at world center if none provided by files
+    if (mx == WORLD_W / 2 && my == WORLD_H / 2) {
+        int hasS = 0;
+        for (int y = 0; y < MAP_HEIGHT && !hasS; ++y) {
+            for (int x = 0; x < MAP_WIDTH && !hasS; ++x) {
+                if (m->tiles[y][x] == 'S') hasS = 1;
+            }
+        }
+        if (!hasS) m->tiles[midY][midX] = 'S';
+    }
 }
 
 static int is_open(Map *m, int x, int y) { if (x<0||x>=MAP_WIDTH||y<0||y>=MAP_HEIGHT) return 0; return m->tiles[y][x] != '#'; }
