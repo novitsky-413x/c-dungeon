@@ -11,6 +11,8 @@
 #endif
 
 static net_socket_t g_sock = -1;
+static char g_recv_buf[8192];
+static int g_recv_len = 0;
 
 static void parse_host_port(const char *in, char *host, size_t hostcap, char *port, size_t portcap) {
     const char *colon = strrchr(in, ':');
@@ -41,6 +43,7 @@ int client_connect(const char *addr_input) {
 void client_disconnect(void) {
     if (g_sock >= 0) { net_close(g_sock); g_sock = -1; }
     net_cleanup();
+    g_recv_len = 0;
 }
 
 void client_send_input(int dx, int dy, int shoot) {
@@ -53,28 +56,57 @@ void client_send_input(int dx, int dy, int shoot) {
 int client_poll_messages(void) {
     int changed = 0;
     if (g_sock < 0) return 0;
-    char buf[2048];
-    int n = net_recv_nonblocking(g_sock, buf, sizeof(buf) - 1);
+    char tmp[2048];
+    int n = net_recv_nonblocking(g_sock, tmp, sizeof(tmp));
     if (n <= 0) return 0;
-    buf[n] = '\0';
-    // Reset remote bullets; server sends a full snapshot each tick
+    // Reset snapshots on new data chunk
     for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) g_remote_bullets[i].active = 0;
-    // Reset remote enemies each tick as well
     for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) g_remote_enemies[i].active = 0;
-    // Protocol lines:
-    //  - YOU id
-    //  - PLAYER id wx wy x y color active
-    //  - TILE wx wy x y ch
-    //  - BULLET wx wy x y active
-    char *p = buf;
-    while (*p) {
-        char *eol = strchr(p, '\n'); if (eol) *eol = '\0';
-        if (strncmp(p, "YOU ", 4) == 0) {
-            g_my_player_id = atoi(p + 4);
+    // Append to rolling buffer, clamp if necessary (drop oldest on overflow)
+    int cap = (int)sizeof(g_recv_buf) - 1;
+    if (g_recv_len + n > cap) {
+        int over = g_recv_len + n - cap;
+        if (over >= g_recv_len) {
+            int keep = cap;
+            if (keep > n) keep = n;
+            memcpy(g_recv_buf, tmp + (n - keep), keep);
+            g_recv_len = keep;
+        } else {
+            memmove(g_recv_buf, g_recv_buf + over, g_recv_len - over);
+            g_recv_len -= over;
+            memcpy(g_recv_buf + g_recv_len, tmp, n);
+            g_recv_len += n;
+        }
+    } else {
+        memcpy(g_recv_buf + g_recv_len, tmp, n);
+        g_recv_len += n;
+    }
+    g_recv_buf[g_recv_len] = '\0';
+
+    // Process complete lines
+    while (1) {
+        char *eol = memchr(g_recv_buf, '\n', g_recv_len);
+        if (!eol) break;
+        int linelen = (int)(eol - g_recv_buf);
+        char line[256];
+        if (linelen >= (int)sizeof(line)) linelen = (int)sizeof(line) - 1;
+        memcpy(line, g_recv_buf, linelen);
+        line[linelen] = '\0';
+
+        // Shift remaining buffer
+        int remain = g_recv_len - (linelen + 1);
+        if (remain > 0) memmove(g_recv_buf, eol + 1, remain);
+        g_recv_len = remain;
+        g_recv_buf[g_recv_len] = '\0';
+
+        // Parse one line
+        if (line[0] == '\0') continue;
+        if (strncmp(line, "YOU ", 4) == 0) {
+            g_my_player_id = atoi(line + 4);
             changed = 1;
-        } else if (strncmp(p, "PLAYER ", 7) == 0) {
+        } else if (strncmp(line, "PLAYER ", 7) == 0) {
             int id, wx, wy, x, y, color, active;
-            if (sscanf(p + 7, "%d %d %d %d %d %d %d", &id, &wx, &wy, &x, &y, &color, &active) == 7) {
+            if (sscanf(line + 7, "%d %d %d %d %d %d %d", &id, &wx, &wy, &x, &y, &color, &active) == 7) {
                 if (id >= 0 && id < MAX_REMOTE_PLAYERS) {
                     g_remote_players[id].active = active;
                     if (active) {
@@ -84,23 +116,21 @@ int client_poll_messages(void) {
                         g_remote_players[id].pos.y = y;
                         g_remote_players[id].colorIndex = color;
                         if (id == g_my_player_id) {
-                            // Apply server-authoritative position/world for ourself
                             game_mp_set_self(wx, wy, x, y);
                         }
                         changed = 1;
                     }
                 }
             }
-        } else if (strncmp(p, "TILE ", 5) == 0) {
+        } else if (strncmp(line, "TILE ", 5) == 0) {
             int wx, wy, x, y; char ch;
-            if (sscanf(p + 5, "%d %d %d %d %c", &wx, &wy, &x, &y, &ch) == 5) {
+            if (sscanf(line + 5, "%d %d %d %d %c", &wx, &wy, &x, &y, &ch) == 5) {
                 game_mp_set_tile(wx, wy, x, y, ch);
                 changed = 1;
             }
-        } else if (strncmp(p, "BULLET ", 7) == 0) {
+        } else if (strncmp(line, "BULLET ", 7) == 0) {
             int wx, wy, x, y, active;
-            if (sscanf(p + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &active) == 5) {
-                // naive compaction: place/update first matching slot or first free
+            if (sscanf(line + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &active) == 5) {
                 int slot = -1;
                 for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) {
                     if (g_remote_bullets[i].active && g_remote_bullets[i].worldX == wx && g_remote_bullets[i].worldY == wy && g_remote_bullets[i].pos.x == x && g_remote_bullets[i].pos.y == y) { slot = i; break; }
@@ -117,9 +147,9 @@ int client_poll_messages(void) {
                     changed = 1;
                 }
             }
-        } else if (strncmp(p, "ENEMY ", 7) == 0) {
+        } else if (strncmp(line, "ENEMY ", 7) == 0) {
             int wx, wy, x, y, hp;
-            if (sscanf(p + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &hp) == 5) {
+            if (sscanf(line + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &hp) == 5) {
                 int slot = -1;
                 for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) {
                     if (g_remote_enemies[i].active && g_remote_enemies[i].worldX == wx && g_remote_enemies[i].worldY == wy && g_remote_enemies[i].pos.x == x && g_remote_enemies[i].pos.y == y) { slot = i; break; }
@@ -138,8 +168,6 @@ int client_poll_messages(void) {
                 }
             }
         }
-        if (!eol) break;
-        p = eol + 1;
     }
     return changed;
 }

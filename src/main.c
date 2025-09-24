@@ -44,6 +44,7 @@ static void print_menu(void) {
 int main(void) {
     srand((unsigned int)time(NULL));
     term_enable_ansi();
+    term_enter_alt_screen();
     term_hide_cursor();
 #ifndef _WIN32
     term_enable_raw_mode();
@@ -127,7 +128,7 @@ int main(void) {
         game_tick_count++;
     }
 
-    term_clear_screen();
+    term_exit_alt_screen();
     term_show_cursor();
     if (game_player_won) printf("You escaped the dungeon!\n"); else printf("You were caught by an enemy. Game Over.\n");
     printf("Thanks for playing.\n");

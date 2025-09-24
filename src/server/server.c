@@ -61,6 +61,23 @@ static unsigned long long g_nextConnId = 1ULL;
 static SrvBullet bullets[MAX_REMOTE_BULLETS];
 static SrvEnemy enemies[WORLD_H][WORLD_W][MAX_ENEMIES];
 
+static void send_full_map_to(int clientIdx) {
+    if (clientIdx < 0 || clientIdx >= MAX_CLIENTS) return;
+    if (!clients[clientIdx].connected) return;
+    char line[64];
+    for (int wy = 0; wy < WORLD_H; ++wy) {
+        for (int wx = 0; wx < WORLD_W; ++wx) {
+            for (int y = 0; y < MAP_HEIGHT; ++y) {
+                for (int x = 0; x < MAP_WIDTH; ++x) {
+                    char ch = world[wy][wx].tiles[y][x];
+                    int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", wx, wy, x, y, ch);
+                    send(clients[clientIdx].sock, line, n, 0);
+                }
+            }
+        }
+    }
+}
+
 static FILE *try_open_map(const char *prefix, int mx, int my) {
     char path[256]; snprintf(path, sizeof(path), "%smaps/x%d-y%d.txt", prefix, mx, my);
     return fopen(path, "rb");
@@ -304,6 +321,8 @@ int main(int argc, char **argv) {
                     fflush(stdout);
                     char you[32]; int n = snprintf(you, sizeof(you), "YOU %d\n", idx);
                     send(clients[idx].sock, you, n, 0);
+                    // send full map snapshot to ensure client renders current walls/tiles
+                    send_full_map_to(idx);
                 } else {
                     const char *full = "FULL\n"; send(cs, full, (int)strlen(full), 0);
 #ifdef _WIN32

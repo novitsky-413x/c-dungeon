@@ -40,6 +40,16 @@ void term_clear_screen(void) {
     printf("\x1b[2J\x1b[H");
 }
 
+void term_enter_alt_screen(void) {
+    if (!ansi_inited) term_enable_ansi();
+    printf("\x1b[?1049h");
+}
+
+void term_exit_alt_screen(void) {
+    if (!ansi_inited) term_enable_ansi();
+    printf("\x1b[?1049l");
+}
+
 #ifndef _WIN32
 void term_enable_raw_mode(void) {
     tcgetattr(STDIN_FILENO, &originalTermios);

@@ -311,7 +311,7 @@ void game_draw(void) {
     char frame[16384];
     int pos = 0;
     int cap = (int)sizeof(frame);
-    int n = snprintf(frame + pos, cap - pos, "\x1b[2J\x1b[H");
+    int n = snprintf(frame + pos, cap - pos, "\x1b[H");
     if (n > 0) { pos += n; if (pos > cap) pos = cap; }
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
