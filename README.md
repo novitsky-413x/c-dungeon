@@ -1,47 +1,53 @@
 # Dungeon (C, terminal roguelite)
 
-A tiny cross-platform terminal game written in C. Runs in PowerShell, bash, and zsh with ANSI colors. Features a 3x3 world composed of map files, shooting, destructible walls, score/lives, and an optional lightweight multiplayer server.
+A tiny cross-platform terminal game written in C. Runs in PowerShell, bash, and zsh with ANSI colors. Features a 9x9 world composed of map files, shooting, destructible walls, score/lives, a scoreboard and minimap, and an optional lightweight multiplayer server with server-authoritative simulation.
 
 ## Features
-- 3x3 world grid loaded from `maps/` at startup (`x0-y0.txt` … `x2-y2.txt`, 40x18 each)
+- 9x9 world grid loaded from `maps/` at startup (`x0-y0.txt` … `x8-y8.txt`, 40x18 each)
 - Tiles: `#` wall, `.` floor, `@` optional start marker, `X` restore lives (consumed), `W` goal
 - Colors: player cyan, enemies red, walls bright white, floor dim, goal purple, life pickup yellow
 - Shooting and destructible walls
   - Space fires in facing direction
   - Enemies: 2 hits to kill; Walls: 5 hits to break
-- Lives/score and invincibility
+- Lives/score and invincibility (singleplayer)
   - 3 lives; collide with enemy → -1 life and 3s invincibility (flicker)
   - Score +1 per enemy kill
-  - On 0 lives: lives reset to 3, score reset to 0, teleport to a random open tile on a different map, keep playing
+  - On 0 lives: lives reset to 3, score reset to 0, respawn and keep playing
 - World navigation
-  - Move off edges to change maps
-  - You can only cross if the exact entry cell in the next map is open (no auto-adjust)
-  - HUD shows global coordinates across the 3x3 world
+  - Move off edges to change maps; transition only if the exact entry cell in the next map is open
+- HUD and UI
+  - HP line directly under the main map
+  - Scoreboard (left) and minimap (right) on the same row under HP
+    - Scoreboard shows up to 16 connected players as colored `@` with 4-digit scores (e.g., 9999)
+    - Minimap shows a 9x9 world overview with current map marked `X` and players as colored `@`
+  - Hints (controls) below scoreboard/minimap
+  - Multiplayer loading screen: animated sparkles with centered “LOADING” shown until the client receives its first authoritative snapshot
 - Multiplayer (optional)
   - Menu lets you choose Singleplayer or Multiplayer
   - In Multiplayer, enter `host[:port]` (default port 5555) to connect
-  - Other players are rendered as colored `@` on your current map
-  - Server-authoritative movement; client disables local movement/enemy/bullet simulation when connected
-  - Server sends TILE updates for map changes (e.g., walls broken by bullets)
-  - Server broadcasts enemies and bullets each tick; client renders them as an overlay for the current map
+  - Server-authoritative movement and combat; client renders authoritative state
+  - Other players rendered as colored `@`; enemies and bullets from server rendered as overlays
+  - Scoring (server-side):
+    - +1 per enemy kill (to the shooter)
+    - +10 per player kill (PvP, to the shooter)
 
 ## Layout
 ```
-C:\Projects\c\dungeon
+C:\Projects\c\c-dungeon
 ├─ maps\                  # map files (40 cols x 18 rows)
-│  ├─ x0-y0.txt … x2-y2.txt
+│  ├─ x0-y0.txt … x8-y8.txt
 ├─ src\
-│  ├─ game.c/.h           # core game/game loop helpers
+│  ├─ game.c/.h           # core game/game loop helpers + rendering (map/HUD/scoreboard/minimap/loading)
 │  ├─ input.c/.h          # cross-platform input
 │  ├─ term.c/.h           # ANSI, cursor and raw mode helpers
 │  ├─ timeutil.c/.h       # timing helpers
 │  ├─ types.h             # shared types/consts
-│  ├─ main.c              # entry; menu; client runtime
-│  ├─ mp.c/.h             # multiplayer shared state (client-side overlay)
+│  ├─ main.c              # entry; menu; client runtime (SP/MP loop)
+│  ├─ mp.c/.h             # multiplayer shared state (client-side overlay/flags)
 │  ├─ net.c/.h            # minimal socket helpers (cross-platform)
-│  ├─ client_net.c/.h     # client networking (connect/send/poll)
+│  ├─ client_net.c/.h     # client networking (connect/send/poll, message parsing)
 │  └─ server\
-│     └─ server.c         # lightweight C server (multi-client state broadcast)
+│     └─ server.c         # lightweight C server (multi-client state broadcast, scoring)
 ```
 
 ## Quickstart
@@ -118,6 +124,8 @@ The server searches for `maps/` relative to its working directory (`./maps/`, th
 
 2) Start the client and choose “Multiplayer”, then enter the server `host[:port]` (default port 5555). Example: `127.0.0.1:5555`.
 
+While connecting and awaiting the first authoritative snapshot, the client displays an animated loading screen.
+
 ## Controls
 - Move: WASD or Arrow keys
 - Shoot: Space
@@ -137,10 +145,13 @@ The server searches for `maps/` relative to its working directory (`./maps/`, th
   - `BYE` (disconnect request)
 - Server → Client (snapshot each tick; lines may be interleaved):
   - `YOU id` (assigned once upon connect)
-  - `PLAYER id wx wy x y color active` for up to 16 players
+  - `PLAYER id wx wy x y color active hp invincibleTicks superTicks score`
+    - `active` is 0/1
+    - `hp` is current lives (server-side in MP)
+    - `score` is server-tracked; +1 per enemy kill, +10 per player kill
   - `BULLET wx wy x y active` for active remote bullets
   - `ENEMY wx wy x y hp` for visible enemies (hp>0 means alive)
-  - `TILE wx wy x y ch` to mutate a map tile (e.g., breaking a wall `#`→`.`)
+  - `TILE wx wy x y ch` to mutate a map tile (e.g., breaking a wall `#`→'.')
 - Server → Client (refusal):
   - `FULL` when server is at capacity
 
@@ -156,17 +167,21 @@ Authoritative rules in MP:
 - Prebuilt binaries (`dungeon`, `server`, `.exe`) may be present in the repo root for convenience.
 
 ## Roadmap
-- Short-term
-  - Server-enforced player health/damage and respawn rules in MP
-  - Make wall durability consistent in MP (track damage counts; not immediate break)
-  - Connection quality: basic rate limiting, idle pings, and disconnect reasons
-- Mid-term
-  - Latency smoothing: simple client-side interpolation/extrapolation of remote players/bullets
-  - Configurable world size and dynamic map loading
-  - Quality-of-life: Makefile/CMake, Dockerized server, CI build
-- Long-term
-  - Persistence (high scores, per-user stats)
-  - Optional chat and emotes
-  - Cross-platform packaging (static builds where feasible)
+### Short-term
+- Health/score UI polish (icons, color tweaks)
+- Server rate limiting and lightweight anti-spam for INPUT
+- Basic config flags (enemy count, world size, port)
+
+### Mid-term
+- Latency smoothing: simple interpolation/extrapolation of remote players/bullets
+- Configurable/dynamic world size and streaming map I/O
+- Makefile/CMake and CI; Dockerized server
+- Optional PvE/PvP toggles and friendly fire control
+
+### Long-term
+- Persistence: high scores and per-user stats (files or SQLite)
+- Matchmaking/lobbies and optional spectator mode
+- Chat/emotes and simple cosmetics (color themes)
+- Cross-platform packaging (static builds where feasible)
 
 Enjoy exploring the dungeon!
