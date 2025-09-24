@@ -65,6 +65,14 @@ static unsigned long long g_nextConnId = 1ULL;
 static SrvBullet bullets[MAX_REMOTE_BULLETS];
 static SrvEnemy enemies[WORLD_H][WORLD_W][MAX_ENEMIES];
 
+static int is_map_active(int wx, int wy) {
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (!clients[i].connected) continue;
+        if (clients[i].worldX == wx && clients[i].worldY == wy) return 1;
+    }
+    return 0;
+}
+
 static void send_full_map_to(int clientIdx) {
     if (clientIdx < 0 || clientIdx >= MAX_CLIENTS) return;
     if (!clients[clientIdx].connected) return;
@@ -205,6 +213,7 @@ static void broadcast_state(void) {
     // broadcast enemies
     for (int wy = 0; wy < WORLD_H; ++wy) {
         for (int wx = 0; wx < WORLD_W; ++wx) {
+            if (!is_map_active(wx, wy)) continue; // skip maps without active players
             for (int i = 0; i < MAX_ENEMIES; ++i) {
                 SrvEnemy *e = &enemies[wy][wx][i];
                 if (!e->active) continue;
@@ -291,6 +300,7 @@ bullet_continue:
 static void step_enemies(void) {
     for (int wy = 0; wy < WORLD_H; ++wy) {
         for (int wx = 0; wx < WORLD_W; ++wx) {
+            if (!is_map_active(wx, wy)) continue; // optimize: only simulate maps with players
             for (int i = 0; i < MAX_ENEMIES; ++i) {
                 SrvEnemy *e = &enemies[wy][wx][i];
                 if (!e->active) continue;
@@ -310,6 +320,35 @@ static void step_enemies(void) {
                 }
                 if (occ) continue;
                 e->pos.x = nx; e->pos.y = ny;
+            }
+        }
+    }
+}
+
+static void apply_enemy_contact_damage(void) {
+    for (int ci = 0; ci < MAX_CLIENTS; ++ci) {
+        if (!clients[ci].connected) continue;
+        int wx = clients[ci].worldX;
+        int wy = clients[ci].worldY;
+        // Skip damage on spawn map
+        if (map_has_spawn(wx, wy)) continue;
+        // Check enemy collision on this map
+        for (int ei = 0; ei < MAX_ENEMIES; ++ei) {
+            SrvEnemy *e = &enemies[wy][wx][ei];
+            if (!e->active) continue;
+            if (e->pos.x == clients[ci].pos.x && e->pos.y == clients[ci].pos.y) {
+                if (clients[ci].invincibleTicks <= 0 && clients[ci].hp > 0) {
+                    clients[ci].hp--;
+                    clients[ci].invincibleTicks = 60; // ~3s at 50ms tick
+                    if (clients[ci].hp <= 0) {
+                        place_near_spawn(&clients[ci]);
+                        clients[ci].hp = 3;
+                        clients[ci].superTicks = 0;
+                        clients[ci].shootCooldown = 0;
+                        clients[ci].invincibleTicks = 60;
+                    }
+                }
+                break; // only one enemy contact per tick
             }
         }
     }
@@ -501,6 +540,7 @@ int main(int argc, char **argv) {
 
         step_bullets();
         step_enemies();
+        apply_enemy_contact_damage();
         // tick down timers
         for (int i = 0; i < MAX_CLIENTS; ++i) {
             if (!clients[i].connected) continue;

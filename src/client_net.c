@@ -151,9 +151,9 @@ int client_poll_messages(void) {
                     changed = 1;
                 }
             }
-        } else if (strncmp(line, "ENEMY ", 7) == 0) {
+        } else if (strncmp(line, "ENEMY ", 6) == 0) {
             int wx, wy, x, y, hp;
-            if (sscanf(line + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &hp) == 5) {
+            if (sscanf(line + 6, "%d %d %d %d %d", &wx, &wy, &x, &y, &hp) == 5) {
                 int slot = -1;
                 for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) {
                     if (g_remote_enemies[i].active && g_remote_enemies[i].worldX == wx && g_remote_enemies[i].worldY == wy && g_remote_enemies[i].pos.x == x && g_remote_enemies[i].pos.y == y) { slot = i; break; }
