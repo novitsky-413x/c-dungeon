@@ -19,6 +19,7 @@ int net_init(void);
 void net_cleanup(void);
 net_socket_t net_connect_hostport(const char *host, const char *port);
 int net_set_nonblocking(net_socket_t s);
+int net_set_tcp_nodelay_keepalive(net_socket_t s);
 int net_send_all(net_socket_t s, const void *buf, int len);
 int net_recv_nonblocking(net_socket_t s, void *buf, int cap);
 void net_close(net_socket_t s);

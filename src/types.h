@@ -43,6 +43,11 @@ typedef struct {
     int invincibleTicks;
     int superTicks;
     int score;
+    // client-side smoothing
+    Vec2 lastPos;
+    int lastWorldX;
+    int lastWorldY;
+    int lastUpdateTick; // client tick when we processed last snapshot
 } RemotePlayer;
 
 typedef struct {
@@ -50,6 +55,11 @@ typedef struct {
     int worldX;
     int worldY;
     Vec2 pos;
+    // smoothing
+    Vec2 lastPos;
+    int lastWorldX;
+    int lastWorldY;
+    int lastUpdateTick;
 } RemoteBullet;
 
 typedef struct {

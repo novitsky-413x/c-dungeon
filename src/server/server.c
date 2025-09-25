@@ -13,6 +13,7 @@ typedef SOCKET sock_t;
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <netinet/tcp.h>
 typedef int sock_t;
 #endif
 
@@ -60,6 +61,12 @@ typedef struct {
     char addr[64];
     char port[16];
     unsigned long long connId;
+    // Lightweight input rate limiting
+    int tokens; // leaky-bucket tokens
+    int maxTokens; // capacity
+    int refillTicks; // every N ticks, add tokens
+    int refillAmount; // tokens added per refill
+    int tickSinceRefill;
 } Client;
 
 static Map world[WORLD_H][WORLD_W];
@@ -438,6 +445,9 @@ int main(int argc, char **argv) {
             struct sockaddr_storage ss; socklen_t slen = sizeof(ss);
             sock_t cs = accept(lsock, (struct sockaddr*)&ss, &slen);
             if (cs >= 0) {
+                // Set socket options to reduce latency and detect dead peers
+                int one = 1; setsockopt(cs, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one));
+                setsockopt(cs, SOL_SOCKET, SO_KEEPALIVE, (const char*)&one, sizeof(one));
                 int idx = -1; for (int i = 0; i < MAX_CLIENTS; ++i) if (!clients[i].connected) { idx = i; break; }
                 if (idx >= 0) {
                     clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx;
@@ -449,6 +459,11 @@ int main(int argc, char **argv) {
                     clients[idx].shootCooldown = 0;
                     clients[idx].score = 0;
                     clients[idx].lastActive = time(NULL);
+                    clients[idx].tokens = 10; // start with some burst allowance
+                    clients[idx].maxTokens = 20;
+                    clients[idx].refillTicks = 2; // every 2 server ticks (~100ms)
+                    clients[idx].refillAmount = 1; // add 1 token
+                    clients[idx].tickSinceRefill = 0;
                     char host[64] = {0}, serv[16] = {0};
                     if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
                         strncpy(host, "?", sizeof(host)-1); strncpy(serv, "?", sizeof(serv)-1);
@@ -505,7 +520,7 @@ int main(int argc, char **argv) {
                 continue;
             }
             buf[n] = '\0';
-            // parse simple commands: INPUT dx dy shoot
+            // parse simple commands: INPUT dx dy shoot | PING t
             char *p = buf;
             while (*p) {
                 char *eol = strchr(p, '\n'); if (eol) *eol = '\0';
@@ -520,8 +535,21 @@ int main(int argc, char **argv) {
                     close(clients[i].sock);
 #endif
                     clients[i].sock = 0;
+                } else if (strncmp(p, "PING ", 5) == 0) {
+                    // Reflect back the timestamp for RTT measurement
+                    char line[64]; int rn = snprintf(line, sizeof(line), "PONG %s\n", p + 5);
+                    send(clients[i].sock, line, rn, 0);
                 } else if (sscanf(p, "INPUT %d %d %d", &dx, &dy, &shoot) == 3) {
                     clients[i].lastActive = time(NULL);
+                    // Rate limit: consume one token per INPUT; if none, drop and optionally warn
+                    if (clients[i].tokens <= 0) {
+                        // send minimal soft warning once in a while
+                        // (not strictly necessary for gameplay; keeps bandwidth tiny)
+                        // char warn[] = "WARN slow down\n"; send(clients[i].sock, warn, (int)strlen(warn), 0);
+                        goto parsed_continue;
+                    } else {
+                        clients[i].tokens--;
+                    }
                     // update facing if a directional input was provided, even if movement is blocked
                     if (dx < 0) clients[i].facing = DIR_LEFT; else if (dx > 0) clients[i].facing = DIR_RIGHT; else if (dy < 0) clients[i].facing = DIR_UP; else if (dy > 0) clients[i].facing = DIR_DOWN;
                     int nx = clients[i].pos.x + dx;
@@ -568,6 +596,7 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
+parsed_continue:
                 if (!eol) break; p = eol + 1;
             }
         }
@@ -610,12 +639,18 @@ int main(int argc, char **argv) {
                 broadcast_tile(wx, wy, x, y, '.');
             }
         }
-        // tick down timers
+        // tick down timers and refill input tokens
         for (int i = 0; i < MAX_CLIENTS; ++i) {
             if (!clients[i].connected) continue;
             if (clients[i].invincibleTicks > 0) clients[i].invincibleTicks--;
             if (clients[i].superTicks > 0) clients[i].superTicks--;
             if (clients[i].shootCooldown > 0) clients[i].shootCooldown--;
+            clients[i].tickSinceRefill++;
+            if (clients[i].tickSinceRefill >= clients[i].refillTicks) {
+                clients[i].tickSinceRefill = 0;
+                clients[i].tokens += clients[i].refillAmount;
+                if (clients[i].tokens > clients[i].maxTokens) clients[i].tokens = clients[i].maxTokens;
+            }
         }
         broadcast_state();
         tickCounter++;
