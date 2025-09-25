@@ -164,11 +164,20 @@ int client_poll_messages(void) {
                     for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) { if (!g_remote_bullets[i].active) { slot = i; break; } }
                 }
                 if (slot >= 0) {
+                    int wasActive = g_remote_bullets[slot].active;
                     g_remote_bullets[slot].active = active;
-                    // store last for smoothing
-                    g_remote_bullets[slot].lastWorldX = g_remote_bullets[slot].worldX;
-                    g_remote_bullets[slot].lastWorldY = g_remote_bullets[slot].worldY;
-                    g_remote_bullets[slot].lastPos = g_remote_bullets[slot].pos;
+                    // initialize smoothing baseline on first activation to avoid sliding
+                    if (active && !wasActive) {
+                        g_remote_bullets[slot].lastWorldX = wx;
+                        g_remote_bullets[slot].lastWorldY = wy;
+                        g_remote_bullets[slot].lastPos.x = x;
+                        g_remote_bullets[slot].lastPos.y = y;
+                    } else {
+                        // store last for smoothing
+                        g_remote_bullets[slot].lastWorldX = g_remote_bullets[slot].worldX;
+                        g_remote_bullets[slot].lastWorldY = g_remote_bullets[slot].worldY;
+                        g_remote_bullets[slot].lastPos = g_remote_bullets[slot].pos;
+                    }
                     g_remote_bullets[slot].worldX = wx;
                     g_remote_bullets[slot].worldY = wy;
                     g_remote_bullets[slot].pos.x = x;
