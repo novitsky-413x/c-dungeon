@@ -374,7 +374,23 @@ void game_draw(void) {
                 // Remote bullets overlay (same world only)
                 if (!drew && g_mp_active) {
                     for (int bi = 0; bi < MAX_REMOTE_BULLETS; ++bi) {
-                        if (g_remote_bullets[bi].active && g_remote_bullets[bi].worldX == curWorldX && g_remote_bullets[bi].worldY == curWorldY && g_remote_bullets[bi].pos.x == x && g_remote_bullets[bi].pos.y == y) {
+                        if (!g_remote_bullets[bi].active) continue;
+                        if (g_remote_bullets[bi].worldX != curWorldX || g_remote_bullets[bi].worldY != curWorldY) continue;
+                        int bx = g_remote_bullets[bi].pos.x;
+                        int by = g_remote_bullets[bi].pos.y;
+                        extern int game_tick_count;
+                        int bticks = game_tick_count - g_remote_bullets[bi].lastUpdateTick;
+                        if (bticks > 0 && bticks < 4) {
+                            int lx = g_remote_bullets[bi].lastPos.x;
+                            int ly = g_remote_bullets[bi].lastPos.y;
+                            if (lx != bx || ly != by) {
+                                int sx = lx, sy = ly;
+                                if (bx > lx) sx = lx + 1; else if (bx < lx) sx = lx - 1;
+                                if (by > ly) sy = ly + 1; else if (by < ly) sy = ly - 1;
+                                bx = sx; by = sy;
+                            }
+                        }
+                        if (bx == x && by == y) {
                             out = '*';
                             color = TERM_FG_BRIGHT_GREEN;
                             drew = 1;
@@ -415,8 +431,22 @@ void game_draw(void) {
         for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) {
             if (!g_remote_players[i].active) continue;
             if (g_remote_players[i].worldX == curWorldX && g_remote_players[i].worldY == curWorldY) {
+                // Simple smoothing: if recent update, blend towards current; else show current
                 int rx = g_remote_players[i].pos.x;
                 int ry = g_remote_players[i].pos.y;
+                extern int game_tick_count;
+                int ticksSince = game_tick_count - g_remote_players[i].lastUpdateTick;
+                if (ticksSince > 0 && ticksSince < 4) { // ~< 4 frames
+                    int lx = g_remote_players[i].lastPos.x;
+                    int ly = g_remote_players[i].lastPos.y;
+                    // linear step towards target
+                    if (lx != rx || ly != ry) {
+                        int sx = lx, sy = ly;
+                        if (rx > lx) sx = lx + 1; else if (rx < lx) sx = lx - 1;
+                        if (ry > ly) sy = ly + 1; else if (ry < ly) sy = ly - 1;
+                        rx = sx; ry = sy;
+                    }
+                }
                 if (rx >= 0 && rx < MAP_WIDTH && ry >= 0 && ry < MAP_HEIGHT) {
                     const char *pcolor = TERM_FG_BRIGHT_BLUE;
                     switch (g_remote_players[i].colorIndex % 6) {
@@ -439,8 +469,10 @@ void game_draw(void) {
     if (g_mp_active) {
         int myhp = 0;
         if (g_my_player_id >= 0 && g_my_player_id < MAX_REMOTE_PLAYERS && g_remote_players[g_my_player_id].active) myhp = g_remote_players[g_my_player_id].hp;
-        // HP directly under map
-        n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d\n", myhp);
+        // HP and Ping directly under map
+        extern int g_net_ping_ms;
+        if (g_net_ping_ms >= 0) n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d   Ping: %d ms\n", myhp, g_net_ping_ms);
+        else n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d   Ping: -- ms\n", myhp);
     } else {
         // HP directly under map (score will be shown in the scoreboard)
         n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d\n", game_player_lives);

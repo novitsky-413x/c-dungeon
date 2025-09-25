@@ -1,5 +1,8 @@
 #include "net.h"
 #include <string.h>
+#ifndef _WIN32
+#include <netinet/tcp.h>
+#endif
 
 int net_init(void) {
 #ifdef _WIN32
@@ -29,6 +32,20 @@ int net_set_nonblocking(net_socket_t s) {
 #else
     int flags = fcntl(s, F_GETFL, 0); if (flags < 0) return -1; return fcntl(s, F_SETFL, flags | O_NONBLOCK);
 #endif
+}
+
+int net_set_tcp_nodelay_keepalive(net_socket_t s) {
+    int ok = 0;
+#ifdef _WIN32
+    int one = 1;
+    if (setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one)) == 0) ok++;
+    if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (const char*)&one, sizeof(one)) == 0) ok++;
+#else
+    int one = 1;
+    if (setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0) ok++;
+    if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one)) == 0) ok++;
+#endif
+    return (ok == 2) ? 0 : -1;
 }
 
 net_socket_t net_connect_hostport(const char *host, const char *port) {

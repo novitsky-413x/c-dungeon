@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "timeutil.h"
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
@@ -13,6 +14,9 @@
 static net_socket_t g_sock = -1;
 static char g_recv_buf[8192];
 static int g_recv_len = 0;
+static double g_last_ping_ms = 0.0;
+
+extern int g_net_ping_ms; // from mp.c
 
 static void parse_host_port(const char *in, char *host, size_t hostcap, char *port, size_t portcap) {
     const char *colon = strrchr(in, ':');
@@ -35,6 +39,7 @@ int client_connect(const char *addr_input) {
     g_sock = net_connect_hostport(host, port);
     if (g_sock < 0) return -1;
     net_set_nonblocking(g_sock);
+    net_set_tcp_nodelay_keepalive(g_sock);
     // Simple hello
     const char *hello = "HELLO\n"; net_send_all(g_sock, hello, (int)strlen(hello));
     return 0;
@@ -56,6 +61,14 @@ void client_send_input(int dx, int dy, int shoot) {
 int client_poll_messages(void) {
     int changed = 0;
     if (g_sock < 0) return 0;
+    // Periodic ping (1 Hz)
+    double now = now_ms();
+    if (now - g_last_ping_ms >= 1000.0) {
+        char pbuf[64];
+        int pn = snprintf(pbuf, sizeof(pbuf), "PING %.3f\n", now);
+        net_send_all(g_sock, pbuf, pn);
+        g_last_ping_ms = now;
+    }
     char tmp[2048];
     int n = net_recv_nonblocking(g_sock, tmp, sizeof(tmp));
     if (n <= 0) return 0;
@@ -111,10 +124,15 @@ int client_poll_messages(void) {
                 if (id >= 0 && id < MAX_REMOTE_PLAYERS) {
                     g_remote_players[id].active = active;
                     if (active) {
+                        // store last for interpolation
+                        g_remote_players[id].lastWorldX = g_remote_players[id].worldX;
+                        g_remote_players[id].lastWorldY = g_remote_players[id].worldY;
+                        g_remote_players[id].lastPos = g_remote_players[id].pos;
                         g_remote_players[id].worldX = wx;
                         g_remote_players[id].worldY = wy;
                         g_remote_players[id].pos.x = x;
                         g_remote_players[id].pos.y = y;
+                        extern int game_tick_count; g_remote_players[id].lastUpdateTick = game_tick_count;
                         g_remote_players[id].colorIndex = color;
                         if (parsed >= 8) g_remote_players[id].hp = hp; else g_remote_players[id].hp = 3;
                         if (parsed >= 9) g_remote_players[id].invincibleTicks = inv; else g_remote_players[id].invincibleTicks = 0;
@@ -147,10 +165,15 @@ int client_poll_messages(void) {
                 }
                 if (slot >= 0) {
                     g_remote_bullets[slot].active = active;
+                    // store last for smoothing
+                    g_remote_bullets[slot].lastWorldX = g_remote_bullets[slot].worldX;
+                    g_remote_bullets[slot].lastWorldY = g_remote_bullets[slot].worldY;
+                    g_remote_bullets[slot].lastPos = g_remote_bullets[slot].pos;
                     g_remote_bullets[slot].worldX = wx;
                     g_remote_bullets[slot].worldY = wy;
                     g_remote_bullets[slot].pos.x = x;
                     g_remote_bullets[slot].pos.y = y;
+                    extern int game_tick_count; g_remote_bullets[slot].lastUpdateTick = game_tick_count;
                     changed = 1;
                 }
             }
@@ -173,6 +196,14 @@ int client_poll_messages(void) {
                     g_remote_enemies[slot].hp = hp;
                     changed = 1;
                 }
+            }
+        } else if (strncmp(line, "PONG ", 5) == 0) {
+            double sentMs = 0.0;
+            if (sscanf(line + 5, "%lf", &sentMs) == 1) {
+                double rtt = now_ms() - sentMs;
+                int rtti = (int)(rtt + 0.5);
+                if (g_net_ping_ms < 0) g_net_ping_ms = rtti;
+                else g_net_ping_ms = (int)(0.8 * (double)g_net_ping_ms + 0.2 * (double)rtti);
             }
         }
     }
