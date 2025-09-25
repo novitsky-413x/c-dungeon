@@ -380,14 +380,25 @@ void game_draw(void) {
                         int by = g_remote_bullets[bi].pos.y;
                         extern int game_tick_count;
                         int bticks = game_tick_count - g_remote_bullets[bi].lastUpdateTick;
-                        if (bticks > 0 && bticks < 4) {
+                        int sameWorldHistoryB = (g_remote_bullets[bi].lastWorldX == g_remote_bullets[bi].worldX && g_remote_bullets[bi].lastWorldY == g_remote_bullets[bi].worldY);
+                        if (sameWorldHistoryB) {
                             int lx = g_remote_bullets[bi].lastPos.x;
                             int ly = g_remote_bullets[bi].lastPos.y;
-                            if (lx != bx || ly != by) {
-                                int sx = lx, sy = ly;
-                                if (bx > lx) sx = lx + 1; else if (bx < lx) sx = lx - 1;
-                                if (by > ly) sy = ly + 1; else if (by < ly) sy = ly - 1;
-                                bx = sx; by = sy;
+                            int mdx = bx - lx;
+                            int mdy = by - ly;
+                            if (bticks > 0 && bticks < 4) {
+                                if (lx != bx || ly != by) {
+                                    int sx = lx, sy = ly;
+                                    if (bx > lx) sx = lx + 1; else if (bx < lx) sx = lx - 1;
+                                    if (by > ly) sy = ly + 1; else if (by < ly) sy = ly - 1;
+                                    bx = sx; by = sy;
+                                }
+                            } else if (bticks >= 3 && bticks < 10) {
+                                int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
+                                int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);
+                                int ex = clamp(bx + sdx, 0, MAP_WIDTH - 1);
+                                int ey = clamp(by + sdy, 0, MAP_HEIGHT - 1);
+                                if (!is_wall(ex, ey)) { bx = ex; by = ey; }
                             }
                         }
                         if (bx == x && by == y) {
@@ -431,20 +442,32 @@ void game_draw(void) {
         for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) {
             if (!g_remote_players[i].active) continue;
             if (g_remote_players[i].worldX == curWorldX && g_remote_players[i].worldY == curWorldY) {
-                // Simple smoothing: if recent update, blend towards current; else show current
+                // Simple smoothing & extrapolation
                 int rx = g_remote_players[i].pos.x;
                 int ry = g_remote_players[i].pos.y;
                 extern int game_tick_count;
                 int ticksSince = game_tick_count - g_remote_players[i].lastUpdateTick;
-                if (ticksSince > 0 && ticksSince < 4) { // ~< 4 frames
+                int sameWorldHistory = (g_remote_players[i].lastWorldX == g_remote_players[i].worldX && g_remote_players[i].lastWorldY == g_remote_players[i].worldY);
+                if (sameWorldHistory) {
                     int lx = g_remote_players[i].lastPos.x;
                     int ly = g_remote_players[i].lastPos.y;
-                    // linear step towards target
-                    if (lx != rx || ly != ry) {
-                        int sx = lx, sy = ly;
-                        if (rx > lx) sx = lx + 1; else if (rx < lx) sx = lx - 1;
-                        if (ry > ly) sy = ly + 1; else if (ry < ly) sy = ly - 1;
-                        rx = sx; ry = sy;
+                    int mdx = rx - lx;
+                    int mdy = ry - ly;
+                    if (ticksSince > 0 && ticksSince < 4) {
+                        // interpolate one step from last -> current
+                        if (lx != rx || ly != ry) {
+                            int sx = lx, sy = ly;
+                            if (rx > lx) sx = lx + 1; else if (rx < lx) sx = lx - 1;
+                            if (ry > ly) sy = ly + 1; else if (ry < ly) sy = ly - 1;
+                            rx = sx; ry = sy;
+                        }
+                    } else if (ticksSince >= 4 && ticksSince < 15) {
+                        // extrapolate one step beyond current in last movement direction
+                        int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
+                        int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);
+                        int ex = clamp(rx + sdx, 0, MAP_WIDTH - 1);
+                        int ey = clamp(ry + sdy, 0, MAP_HEIGHT - 1);
+                        if (!game_is_blocked(ex, ey)) { rx = ex; ry = ey; }
                     }
                 }
                 if (rx >= 0 && rx < MAP_WIDTH && ry >= 0 && ry < MAP_HEIGHT) {
