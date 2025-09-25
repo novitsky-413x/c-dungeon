@@ -393,7 +393,7 @@ void game_draw(void) {
                                     if (by > ly) sy = ly + 1; else if (by < ly) sy = ly - 1;
                                     bx = sx; by = sy;
                                 }
-                            } else if (bticks >= 3 && bticks < 10) {
+                            } else if (bticks >= 4 && bticks < 15) {
                                 int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
                                 int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);
                                 int ex = clamp(bx + sdx, 0, MAP_WIDTH - 1);
