@@ -386,14 +386,14 @@ void game_draw(void) {
                             int ly = g_remote_bullets[bi].lastPos.y;
                             int mdx = bx - lx;
                             int mdy = by - ly;
-                            if (bticks > 0 && bticks < 4) {
+                            if (bticks > 0 && bticks < REMOTE_INTERP_TICKS) {
                                 if (lx != bx || ly != by) {
                                     int sx = lx, sy = ly;
                                     if (bx > lx) sx = lx + 1; else if (bx < lx) sx = lx - 1;
                                     if (by > ly) sy = ly + 1; else if (by < ly) sy = ly - 1;
                                     bx = sx; by = sy;
                                 }
-                            } else if (bticks >= 4 && bticks < 15) {
+                            } else if (bticks >= REMOTE_INTERP_TICKS && bticks < REMOTE_EXTRAP_TICKS) {
                                 int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
                                 int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);
                                 int ex = clamp(bx + sdx, 0, MAP_WIDTH - 1);
@@ -453,7 +453,7 @@ void game_draw(void) {
                     int ly = g_remote_players[i].lastPos.y;
                     int mdx = rx - lx;
                     int mdy = ry - ly;
-                    if (ticksSince > 0 && ticksSince < 4) {
+                    if (ticksSince > 0 && ticksSince < REMOTE_INTERP_TICKS) {
                         // interpolate one step from last -> current
                         if (lx != rx || ly != ry) {
                             int sx = lx, sy = ly;
@@ -461,7 +461,7 @@ void game_draw(void) {
                             if (ry > ly) sy = ly + 1; else if (ry < ly) sy = ly - 1;
                             rx = sx; ry = sy;
                         }
-                    } else if (ticksSince >= 4 && ticksSince < 15) {
+                    } else if (ticksSince >= REMOTE_INTERP_TICKS && ticksSince < REMOTE_EXTRAP_TICKS) {
                         // extrapolate one step beyond current in last movement direction
                         int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
                         int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);

@@ -9,6 +9,12 @@
 #define MAX_REMOTE_BULLETS 64
 #define MAX_REMOTE_ENEMIES 128
 
+// Client-side smoothing configuration (kept in sync across clients)
+// Interpolate between last and current snapshot for this many ticks
+#define REMOTE_INTERP_TICKS 4
+// Extrapolate one step beyond current in last movement direction up to this many ticks
+#define REMOTE_EXTRAP_TICKS 15
+
 typedef struct {
     int x;
     int y;
