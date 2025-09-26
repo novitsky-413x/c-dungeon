@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dungeon Web Client</title>
+    <style>
+        html, body { height: 100%; margin: 0; background: #0b0e13; color: #dbe2f1; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        .wrap { display: flex; flex-direction: column; gap: 8px; padding: 12px; max-width: 920px; margin: 0 auto; }
+        .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        input, button, select { background: #121722; color: #e8eefc; border: 1px solid #2b3342; border-radius: 6px; padding: 8px 10px; font: inherit; }
+        button { cursor: pointer; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status { font-size: 12px; opacity: 0.8; }
+        canvas { background: #0e141f; border: 1px solid #2b3342; border-radius: 6px; image-rendering: pixelated; }
+        .hint { font-size: 12px; color: #9fb2d6; }
+        .row > * { flex: 0 0 auto; }
+        .spacer { flex: 1 1 auto; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="row">
+        <button id="connect">Reconnect</button>
+        <button id="disconnect" disabled>Disconnect</button>
+        <div class="spacer"></div>
+        <div id="status" class="status">Idle</div>
+    </div>
+    <canvas id="view" width="800" height="480"></canvas>
+    <div class="hint">Controls: WASD/Arrows to move, Space to shoot, Q to quit. Focus the page to control.</div>
+</div>
+
+<script>
+(() => {
+    "use strict";
+
+    // Constants aligned with C/types.h
+    const MAP_WIDTH = 40;
+    const MAP_HEIGHT = 18;
+    const WORLD_W = 9;
+    const WORLD_H = 9;
+    const TILE_SIZE = 16; // pixels per tile in canvas
+    const VIEW_TILE_W = MAP_WIDTH;
+    const VIEW_TILE_H = MAP_HEIGHT + 4; // extra HUD rows
+    const CANVAS_W = VIEW_TILE_W * TILE_SIZE;
+    const CANVAS_H = VIEW_TILE_H * TILE_SIZE;
+
+    const canvas = document.getElementById("view");
+    const ctx = canvas.getContext("2d");
+    canvas.width = CANVAS_W;
+    canvas.height = CANVAS_H;
+
+    const statusEl = document.getElementById("status");
+    const btnConnect = document.getElementById("connect");
+    const btnDisconnect = document.getElementById("disconnect");
+
+    let socket = null;
+    let youId = -1;
+    let lastPingAt = 0;
+    let recvBuf = "";
+
+    // World state
+    const worldTiles = new Array(WORLD_H);
+    for (let y = 0; y < WORLD_H; y++) {
+        worldTiles[y] = new Array(WORLD_W);
+        for (let x = 0; x < WORLD_W; x++) {
+            worldTiles[y][x] = new Array(MAP_HEIGHT);
+            for (let my = 0; my < MAP_HEIGHT; my++) {
+                worldTiles[y][x][my] = new Array(MAP_WIDTH).fill('.');
+            }
+        }
+    }
+
+    const players = []; // index by id: {active, wx, wy, x, y, color, hp, invincibleTicks, superTicks, score}
+    const bullets = []; // array of {wx, wy, x, y, active}
+    const enemies = []; // array of {wx, wy, x, y, hp}
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    // Candidate WebSocket endpoints on runcode.at (fixed URL). The server must expose a WS bridge to the TCP game.
+    const CANDIDATE_ENDPOINTS = [
+        "wss://runcode.at/ws",
+        "wss://runcode.at/dungeon",
+        "wss://runcode.at/",
+        "wss://runcode.at:5555/",
+        "ws://runcode.at:5555/"
+    ];
+
+    let connectAbort = false;
+    async function connect() {
+        btnConnect.disabled = true;
+        btnDisconnect.disabled = false;
+        recvBuf = "";
+        youId = -1;
+        connectAbort = false;
+
+        for (const url of CANDIDATE_ENDPOINTS) {
+            if (connectAbort) return;
+            const ok = await tryOneEndpoint(url);
+            if (ok) return; // connected and handlers installed
+        }
+        setStatus("Unable to connect. A WebSocket bridge on runcode.at is required.");
+        btnConnect.disabled = false;
+        btnDisconnect.disabled = true;
+    }
+
+    function tryOneEndpoint(url) {
+        return new Promise((resolve) => {
+            let opened = false;
+            setStatus("Connecting: " + url);
+            let ws;
+            try {
+                ws = new WebSocket(url);
+            } catch (e) {
+                setStatus("WebSocket error constructing: " + e);
+                resolve(false);
+                return;
+            }
+            ws.binaryType = "arraybuffer";
+            ws.onopen = () => {
+                if (connectAbort) { try { ws.close(); } catch {} resolve(false); return; }
+                opened = true;
+                socket = ws;
+                setStatus("Connected: " + url + " (HELLO)");
+                sendLine("HELLO");
+                resolve(true);
+            };
+            ws.onmessage = (ev) => {
+                let text;
+                if (typeof ev.data === "string") text = ev.data;
+                else text = new TextDecoder().decode(ev.data);
+                recvBuf += text;
+                processBuffer();
+            };
+            ws.onerror = () => {
+                if (!opened) setStatus("Failed: " + url);
+            };
+            ws.onclose = () => {
+                if (socket === ws) {
+                    setStatus("Disconnected");
+                    btnConnect.disabled = false;
+                    btnDisconnect.disabled = true;
+                    socket = null;
+                }
+                if (!opened) resolve(false); // try next endpoint
+            };
+        });
+    }
+
+    function disconnect() {
+        if (socket) {
+            try { sendLine("BYE"); } catch {}
+            socket.close();
+        }
+    }
+
+    function sendLine(s) {
+        if (!socket || socket.readyState !== 1) return;
+        socket.send(s + "\n");
+    }
+
+    function clamp(val, lo, hi) { return Math.max(lo, Math.min(hi, val)); }
+
+    function processBuffer() {
+        while (true) {
+            const idx = recvBuf.indexOf("\n");
+            if (idx < 0) break;
+            const line = recvBuf.slice(0, idx);
+            recvBuf = recvBuf.slice(idx + 1);
+            handleLine(line.trim());
+        }
+    }
+
+    function ensurePlayersSize(id) {
+        while (players.length <= id) players.push({active:0, wx:0, wy:0, x:0, y:0, color:0, hp:0, invincibleTicks:0, superTicks:0, score:0});
+    }
+
+    function parseInts(parts, startIndex) {
+        const out = [];
+        for (let i = startIndex; i < parts.length; i++) out.push(parseInt(parts[i], 10));
+        return out;
+    }
+
+    function handleLine(line) {
+        if (!line) return;
+        const parts = line.split(/\s+/);
+        const tag = parts[0];
+        if (tag === "YOU") {
+            if (parts.length >= 2) youId = parseInt(parts[1], 10);
+            setStatus(`Joined, you are id ${youId}`);
+            return;
+        }
+        if (tag === "FULL") { setStatus("Server full"); return; }
+        if (tag === "PLAYER") {
+            // PLAYER id wx wy x y color active hp invincibleTicks superTicks score
+            if (parts.length < 12) return;
+            const [id, wx, wy, x, y, color, active, hp, invTicks, superTicks, score] = parseInts(parts, 1);
+            ensurePlayersSize(id);
+            Object.assign(players[id], { wx, wy, x, y, color, active, hp, invincibleTicks: invTicks, superTicks, score });
+            return;
+        }
+        if (tag === "BULLET") {
+            // BULLET wx wy x y active
+            if (parts.length < 6) return;
+            const [wx, wy, x, y, active] = parseInts(parts, 1);
+            bullets.push({ wx, wy, x, y, active });
+            return;
+        }
+        if (tag === "ENEMY") {
+            // ENEMY wx wy x y hp
+            if (parts.length < 6) return;
+            const [wx, wy, x, y, hp] = parseInts(parts, 1);
+            enemies.push({ wx, wy, x, y, hp });
+            return;
+        }
+        if (tag === "TILE") {
+            // TILE wx wy x y ch
+            if (parts.length < 6) return;
+            const wx = parseInt(parts[1], 10);
+            const wy = parseInt(parts[2], 10);
+            const x = parseInt(parts[3], 10);
+            const y = parseInt(parts[4], 10);
+            const ch = parts[5][0] || '.';
+            if (wy>=0 && wy<WORLD_H && wx>=0 && wx<WORLD_W && y>=0 && y<MAP_HEIGHT && x>=0 && x<MAP_WIDTH) {
+                worldTiles[wy][wx][y][x] = ch;
+            }
+            return;
+        }
+        // Unknown lines are ignored
+    }
+
+    // Input handling → INPUT dx dy shoot
+    const keyState = new Set();
+    function computeInput() {
+        let dx = 0, dy = 0, shoot = 0;
+        if (keyState.has("ArrowLeft") || keyState.has("a") || keyState.has("A")) dx = -1;
+        else if (keyState.has("ArrowRight") || keyState.has("d") || keyState.has("D")) dx = 1;
+        if (keyState.has("ArrowUp") || keyState.has("w") || keyState.has("W")) dy = -1;
+        else if (keyState.has("ArrowDown") || keyState.has("s") || keyState.has("S")) dy = 1;
+        if (keyState.has(" ")) shoot = 1;
+        return { dx, dy, shoot };
+    }
+
+    function tickNetwork(nowMs) {
+        // Periodic ping at ~1 Hz
+        if (socket && socket.readyState === 1) {
+            if (!lastPingAt || nowMs - lastPingAt >= 1000) {
+                sendLine(`PING ${nowMs.toFixed(3)}`);
+                lastPingAt = nowMs;
+            }
+        }
+        // Send current input state; the native client sends only on keypresses, but sending each frame is fine for a simple client.
+        const { dx, dy, shoot } = computeInput();
+        if (socket && socket.readyState === 1) {
+            if (dx !== 0 || dy !== 0 || shoot !== 0) sendLine(`INPUT ${dx} ${dy} ${shoot}`);
+        }
+    }
+
+    // Simple rendering of one map: choose the map containing you, else center (4,4)
+    function draw() {
+        ctx.fillStyle = "#0e141f";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const me = (youId >= 0 && players[youId] && players[youId].active) ? players[youId] : null;
+        const wx = me ? clamp(players[youId].wx, 0, WORLD_W - 1) : 4;
+        const wy = me ? clamp(players[youId].wy, 0, WORLD_H - 1) : 4;
+
+        // Draw tiles
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                const ch = worldTiles[wy][wx][y][x];
+                const px = x * TILE_SIZE;
+                const py = y * TILE_SIZE;
+                switch (ch) {
+                    case '#': ctx.fillStyle = "#cdd6f4"; break; // wall bright
+                    case 'X': ctx.fillStyle = "#f9e2af"; break; // life pickup
+                    case 'W': ctx.fillStyle = "#cba6f7"; break; // goal
+                    default: ctx.fillStyle = "#1b2535"; break; // floor
+                }
+                ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            }
+        }
+
+        // Draw enemies in this map
+        for (const e of enemies) {
+            if (e.wx !== wx || e.wy !== wy) continue;
+            const px = e.x * TILE_SIZE;
+            const py = e.y * TILE_SIZE;
+            ctx.fillStyle = "#f38ba8"; // red-ish
+            ctx.fillRect(px + 2, py + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+        }
+
+        // Draw bullets in this map
+        for (const b of bullets) {
+            if (!b.active || b.wx !== wx || b.wy !== wy) continue;
+            const px = b.x * TILE_SIZE + TILE_SIZE/2 - 2;
+            const py = b.y * TILE_SIZE + TILE_SIZE/2 - 2;
+            ctx.fillStyle = "#89dceb"; // cyan-ish
+            ctx.fillRect(px, py, 4, 4);
+        }
+
+        // Draw players; you in cyan, others by color index
+        for (let i = 0; i < players.length; i++) {
+            const p = players[i];
+            if (!p || !p.active || p.wx !== wx || p.wy !== wy) continue;
+            const px = p.x * TILE_SIZE;
+            const py = p.y * TILE_SIZE;
+            const isYou = (i === youId);
+            ctx.fillStyle = isYou ? "#89b4fa" : colorFromIndex(p.color);
+            ctx.fillRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+        }
+
+        // Simple HUD
+        const hudY = MAP_HEIGHT * TILE_SIZE + 8;
+        ctx.fillStyle = "#dbe2f1";
+        ctx.fillText("HP/Score: " + (me ? `${me.hp} / ${me.score}` : "-"), 8, hudY);
+        ctx.fillText("Map: (" + wx + "," + wy + ")", 180, hudY);
+        ctx.fillText("Players: " + players.filter(p=>p&&p.active).length, 280, hudY);
+    }
+
+    function colorFromIndex(idx) {
+        const palette = ["#89b4fa","#f38ba8","#a6e3a1","#f9e2af","#cba6f7","#94e2d5","#fab387","#b4befe",
+                         "#f5c2e7","#74c7ec","#eba0ac","#a6adc8","#f2cdcd","#cdd6f4","#89dceb","#f8bd96"]; // up to 16
+        return palette[idx % palette.length];
+    }
+
+    // Main loop
+    function loop(ts) {
+        tickNetwork(ts);
+        // Reset frame-accumulated transient arrays; server sends fresh each tick
+        bullets.length = 0;
+        enemies.length = 0;
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    // Keyboard events
+    window.addEventListener("keydown", (e) => {
+        if (e.key === "q" || e.key === "Q") { disconnect(); return; }
+        if (e.key === " ") e.preventDefault();
+        keyState.add(e.key);
+    });
+    window.addEventListener("keyup", (e) => { keyState.delete(e.key); });
+
+    btnConnect.addEventListener("click", () => { connectAbort = false; connect(); });
+    btnDisconnect.addEventListener("click", disconnect);
+
+    // Start
+    requestAnimationFrame(loop);
+    // Auto-connect on load
+    connect();
+})();
+</script>
+</body>
+</html>
+
+
