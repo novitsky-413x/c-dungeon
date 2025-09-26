@@ -871,10 +871,8 @@ int main(int argc, char **argv) {
                                 if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
                             }
                             send_text_to_client(idx, buf, off);
-                    // now send only the current map snapshot to reduce initial load
+                    // now send only the current map snapshot (for WS clients)
                     send_map_to(idx, clients[idx].worldX, clients[idx].worldY);
-                            // now send only the current map snapshot (for WS clients)
-                            send_map_to(idx, clients[idx].worldX, clients[idx].worldY);
                         }
                     }
                 } else {

@@ -29,6 +29,7 @@ void term_exit_alt_screen(void);
 
 #ifndef _WIN32
 void term_enable_raw_mode(void);
+void term_disable_raw_mode(void);
 #endif
 
 #endif // TERM_H

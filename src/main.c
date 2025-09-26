@@ -18,6 +18,8 @@
 #include "client_net.h"
 
 static int needsRedraw = 1;
+static int loadingStartTick = -1;
+static const int MIN_LOADING_TICKS = 30; // ~0.5s at ~60 FPS
 
 static void handleInput(void) {
     int c = input_read_nonblocking();
@@ -102,10 +104,15 @@ int main(void) {
         if (g_mp_active) {
             extern int g_mp_joined;
             if (client_poll_messages()) needsRedraw = 1;
+            // Track a minimum loading duration so animation is visible even on fast servers
             if (!g_mp_joined) {
+                if (loadingStartTick < 0) loadingStartTick = game_tick_count;
                 // Show loading screen (animate based on game_tick_count)
                 game_draw_loading(game_tick_count);
+            } else if (loadingStartTick >= 0 && (game_tick_count - loadingStartTick) < MIN_LOADING_TICKS) {
+                game_draw_loading(game_tick_count);
             } else {
+                loadingStartTick = -1;
                 if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
                 if (game_update_projectiles()) needsRedraw = 1;
                 if (game_tick_status()) needsRedraw = 1;
@@ -142,6 +149,10 @@ int main(void) {
         game_tick_count++;
     }
 
+    // Restore terminal state
+#ifndef _WIN32
+    term_disable_raw_mode();
+#endif
     term_exit_alt_screen();
     term_show_cursor();
     if (game_player_won) printf("You escaped the dungeon!\n"); else printf("You were caught by an enemy. Game Over.\n");
