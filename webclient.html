@@ -66,6 +66,7 @@
     let inputTimer = null;
     // Track whether initial map for our world tile is fully received
     let initialMapLoaded = false;
+    let loadingAnimTick = 0;
     let joined = false; // becomes true after we receive our PLAYER line with active=1
 
     // World state
@@ -228,7 +229,7 @@
             const [id, wx, wy, x, y, color, active, hp, invTicks, superTicks, score] = parseInts(parts, 1);
             ensurePlayersSize(id);
             Object.assign(players[id], { wx, wy, x, y, color, active, hp, invincibleTicks: invTicks, superTicks, score });
-            if (id === youId && active) { joined = true; initialMapLoaded = false; }
+            if (id === youId && active) { joined = true; initialMapLoaded = false; loadingAnimTick = 0; }
             return;
         }
         if (tag === "BULLET") {
@@ -293,6 +294,7 @@
         }, 1000);
         inputTimer = setInterval(() => {
             if (!socket || socket.readyState !== 1) return;
+            if (!initialMapLoaded) return; // avoid spamming server before ready
             const { dx, dy, shoot } = computeInput();
             if (dx !== 0 || dy !== 0 || shoot !== 0) sendLine(`INPUT ${dx} ${dy} ${shoot}`);
         }, INPUT_INTERVAL_MS);
@@ -316,7 +318,8 @@
         // Use monospace glyph rendering to match console visuals
         ctx.font = `${TILE_SIZE - 2}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
         ctx.textBaseline = "top";
-        // We always draw the map; overlay loading until initial map for our current world tile is complete
+        // If not yet loaded, draw animated loading screen covering map area
+        if (!initialMapLoaded) { drawLoading(); return; }
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const ch = worldTiles[wy][wx][y][x];
@@ -439,17 +442,17 @@
 
     // Loading screen similar to console: dim dots, sparkles, LOADING text
     function drawLoading() {
-        // Background grid
+        // Animated dots background
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const px = x * TILE_SIZE;
                 const py = y * TILE_SIZE;
-                ctx.fillStyle = "#6b7280"; // dim dot
+                ctx.fillStyle = "#6b7280";
                 ctx.fillText('.', px + 1, py + 1);
             }
         }
-        // Sparkles based on time
-        const tick = Math.floor(performance.now() / 100);
+        // Sparkles: deterministic per tick without using performance.now heavy
+        const tick = loadingAnimTick++;
         const sparkCount = 30;
         for (let i = 0; i < sparkCount; i++) {
             const seed = (tick * 1103515245 + 12345 + i * 2654435761) >>> 0;
@@ -460,7 +463,7 @@
             ctx.fillStyle = "#facc15";
             ctx.fillText('*', px + 1, py + 1);
         }
-        // LOADING text centered
+        // Center LOADING text
         const text = "LOADING";
         const charW = ctx.measureText('M').width;
         const cx = Math.floor((MAP_WIDTH - text.length) / 2) * charW + 1;

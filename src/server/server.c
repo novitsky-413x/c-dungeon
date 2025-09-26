@@ -980,6 +980,8 @@ int main(int argc, char **argv) {
                     }
                     // update facing if a directional input was provided, even if movement is blocked
                     if (dx < 0) clients[i].facing = DIR_LEFT; else if (dx > 0) clients[i].facing = DIR_RIGHT; else if (dy < 0) clients[i].facing = DIR_UP; else if (dy > 0) clients[i].facing = DIR_DOWN;
+                    int oldWX = clients[i].worldX;
+                    int oldWY = clients[i].worldY;
                     int nx = clients[i].pos.x + dx;
                     int ny = clients[i].pos.y + dy;
                     // clamp
@@ -1006,6 +1008,10 @@ int main(int argc, char **argv) {
                         if (!occupied) {
                             clients[i].pos.x = nx; clients[i].pos.y = ny;
                         }
+                    }
+                    // If world tile changed, send the new map snapshot to this client
+                    if (clients[i].worldX != oldWX || clients[i].worldY != oldWY) {
+                        send_map_to(i, clients[i].worldX, clients[i].worldY);
                     }
                     if (shoot) {
                         // spawn a server bullet in player's facing; if dx/dy provided, infer and override
