@@ -732,8 +732,6 @@ int main(int argc, char **argv) {
                     fflush(stdout);
                     char you[32]; int n = snprintf(you, sizeof(you), "YOU %d\n", idx);
                     send_text_to_client(idx, you, n);
-                    // send full map snapshot to ensure client renders current walls/tiles
-                    send_full_map_to(idx);
                     // send an immediate state frame so clients can show themselves without waiting a tick
                     char line[128];
                     char buf[4096]; int off = 0;
@@ -750,6 +748,8 @@ int main(int argc, char **argv) {
                         if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
                     }
                     send_text_to_client(idx, buf, off);
+                    // send full map snapshot to ensure client renders current walls/tiles
+                    send_full_map_to(idx);
                 } else {
                     const char *full = "FULL\n"; send(cs, full, (int)strlen(full), 0);
 #ifdef _WIN32
@@ -834,8 +834,7 @@ int main(int argc, char **argv) {
                             place_near_spawn(&clients[idx]);
                             char you[32]; int yn = snprintf(you, sizeof(you), "YOU %d\n", idx);
                             send_text_to_client(idx, you, yn);
-                            send_full_map_to(idx);
-                            // immediate state frame for WS client
+                            // immediate state frame for WS client (before tile snapshot)
                             char line[128];
                             char buf[4096]; int off = 0;
                             int n0 = snprintf(line, sizeof(line), "TICK %d\n", g_tick_counter);
@@ -851,6 +850,8 @@ int main(int argc, char **argv) {
                                 if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
                             }
                             send_text_to_client(idx, buf, off);
+                            // now send full map snapshot
+                            send_full_map_to(idx);
                         }
                     }
                 } else {

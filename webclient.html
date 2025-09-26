@@ -128,16 +128,25 @@
                 resolve(true);
             };
             ws.onmessage = (ev) => {
-                let text;
-                if (typeof ev.data === "string") text = ev.data;
-                else text = new TextDecoder().decode(ev.data);
-                // Each server tick arrives as one WS message containing a batch of lines.
-                // Clear transient arrays so we render only the latest authoritative tick.
-                bullets.length = 0;
-                enemies.length = 0;
-                recvBuf += text;
-                processBuffer();
-                draw();
+                const handleText = (text) => {
+                    // Each server tick arrives as one WS message containing a batch of lines.
+                    // Clear transient arrays so we render only the latest authoritative tick.
+                    bullets.length = 0;
+                    enemies.length = 0;
+                    recvBuf += text;
+                    processBuffer();
+                    draw();
+                };
+                if (typeof ev.data === "string") {
+                    handleText(ev.data);
+                } else if (ev.data instanceof Blob) {
+                    ev.data.text().then(handleText).catch(() => {});
+                } else if (ev.data instanceof ArrayBuffer) {
+                    try { handleText(new TextDecoder().decode(ev.data)); } catch {}
+                } else {
+                    // Fallback: try toString
+                    try { handleText(String(ev.data || "")); } catch {}
+                }
             };
             ws.onerror = () => {
                 if (!opened) setStatus("Failed: " + url);
@@ -195,6 +204,7 @@
         const tag = parts[0];
         if (tag === "YOU") {
             if (parts.length >= 2) youId = parseInt(parts[1], 10);
+            joined = true;
             setStatus(`Joined, you are id ${youId}`);
             return;
         }
@@ -240,7 +250,8 @@
             const wy = parseInt(parts[2], 10);
             const x = parseInt(parts[3], 10);
             const y = parseInt(parts[4], 10);
-            const ch = parts[5][0] || '.';
+            const chToken = parts.slice(5).join(' ');
+            const ch = chToken.length ? chToken[0] : '.';
             if (wy>=0 && wy<WORLD_H && wx>=0 && wx<WORLD_W && y>=0 && y<MAP_HEIGHT && x>=0 && x<MAP_WIDTH) {
                 worldTiles[wy][wx][y][x] = ch;
             }
@@ -297,7 +308,7 @@
         // Use monospace glyph rendering to match console visuals
         ctx.font = `${TILE_SIZE - 2}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
         ctx.textBaseline = "top";
-        if (!joined) { drawLoading(); return; }
+        // We always draw the map; if our player hasn't arrived yet, overlay a loading banner
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const ch = worldTiles[wy][wx][y][x];
@@ -347,10 +358,10 @@
             ctx.fillText('@', px + 1, py + 1);
         }
 
-        // HUD: HP and Ping
+        // HUD: HP and Ping (show loading hint if player not yet present)
         const hudY = MAP_HEIGHT * TILE_SIZE + 4;
         ctx.fillStyle = "#dbe2f1";
-        const hpText = "HP: " + (me ? me.hp : "-");
+        const hpText = me ? ("HP: " + me.hp) : "Loading...";
         const pingText = "Ping: " + (pingMs >= 0 ? (pingMs + " ms") : "-- ms");
         ctx.fillText(hpText + "   " + pingText, 8, hudY);
 
@@ -363,6 +374,10 @@
         const rightX = leftX + scoreboardWidthPx;
         ctx.fillText("Scoreboard", leftX, titleY);
         ctx.fillText("Minimap", rightX, titleY);
+        if (!me) {
+            ctx.fillStyle = "#9fb2d6";
+            ctx.fillText("Waiting for player state...", leftX, titleY - TILE_SIZE + 2);
+        }
 
         // Scoreboard (4x4)
         for (let r = 0; r < rows; r++) {
