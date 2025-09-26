@@ -430,8 +430,10 @@
                     } else if (ticks >= REMOTE_INTERP_TICKS && ticks < REMOTE_EXTRAP_TICKS) {
                         const sdx = mdx > 0 ? 1 : (mdx < 0 ? -1 : 0);
                         const sdy = mdy > 0 ? 1 : (mdy < 0 ? -1 : 0);
-                        bx = clamp(bx + sdx, 0, MAP_WIDTH - 1);
-                        by = clamp(by + sdy, 0, MAP_HEIGHT - 1);
+                        const nx = clamp(bx + sdx, 0, MAP_WIDTH - 1);
+                        const ny = clamp(by + sdy, 0, MAP_HEIGHT - 1);
+                        const nextTile = worldTiles[wy][wx][ny][nx];
+                        if (nextTile !== '#') { bx = nx; by = ny; }
                     }
                 }
             }
