@@ -69,6 +69,10 @@
     let loadingAnimTick = 0;
     let currentWorldX = -1, currentWorldY = -1;
     let joined = false; // becomes true after we receive our PLAYER line with active=1
+    // Client tick counter for interpolation/extrapolation; declared early to avoid TDZ in handlers
+    let gameTick = 0;
+    // Per-message marker to track which bullets were seen in the latest snapshot
+    let currentBulletBatchId = 0;
 
     // World state
     const worldTiles = new Array(WORLD_H);
@@ -135,11 +139,16 @@
             ws.onmessage = (ev) => {
                 const handleText = (text) => {
                     // Each server tick arrives as one WS message containing a batch of lines.
-                    // For bullets, keep objects to enable smoothing; mark all inactive before applying new snapshot.
-                    for (let i = 0; i < bullets.length; i++) bullets[i].active = 0;
+                    // For bullets, keep objects to enable smoothing; mark seen via batch id and deactivate unseen after apply.
+                    currentBulletBatchId = (currentBulletBatchId + 1) | 0;
                     enemies.length = 0;
                     recvBuf += text;
                     processBuffer();
+                    // Deactivate bullets not present in this snapshot
+                    for (let i = 0; i < bullets.length; i++) {
+                        const b = bullets[i];
+                        if (b._seenBatch !== currentBulletBatchId) b.active = 0;
+                    }
                     draw();
                 };
                 if (typeof ev.data === "string") {
@@ -231,8 +240,8 @@
             const [id, wx, wy, x, y, color, active, hp, invTicks, superTicks, score] = parseInts(parts, 1);
             ensurePlayersSize(id);
             const p = players[id];
-            if (!p._last) p._last = { wx, wy, x, y };
-            else p._last = { wx: p.wx, wy: p.wy, x: p.x, y: p.y };
+            const hadPrev = (p._lastUpdateTick !== undefined);
+            if (hadPrev) p._last = { wx: p.wx, wy: p.wy, x: p.x, y: p.y };
             Object.assign(p, { wx, wy, x, y, color, active, hp, invincibleTicks: invTicks, superTicks, score });
             p._lastUpdateTick = gameTick;
             if (id === youId && active) {
@@ -248,19 +257,28 @@
             // BULLET wx wy x y active
             if (parts.length < 6) return;
             const [wx, wy, x, y, active] = parseInts(parts, 1);
-            // Find existing bullet with same position/world to update, else push
+            // Reuse an existing bullet in same world that is nearest (<=1 tile) and not yet matched this batch
             let b = null;
+            let bestDist = 3;
             for (let i = 0; i < bullets.length; i++) {
                 const bb = bullets[i];
-                if (bb.active && bb.wx === wx && bb.wy === wy && bb.x === x && bb.y === y) { b = bb; break; }
+                if (bb.wx !== wx || bb.wy !== wy) continue;
+                if (bb._seenBatch === currentBulletBatchId) continue;
+                let d = Math.abs(bb.x - x) + Math.abs(bb.y - y);
+                if (bb._last) {
+                    const dl = Math.abs(bb._last.x - x) + Math.abs(bb._last.y - y);
+                    if (dl < d) d = dl;
+                }
+                if (d <= 1 && d < bestDist) { b = bb; bestDist = d; }
             }
             if (!b) {
-                b = { wx, wy, x, y, active, _last: { wx, wy, x, y }, _lastUpdateTick: gameTick };
+                b = { wx, wy, x, y, active, _last: null, _lastUpdateTick: gameTick, _seenBatch: currentBulletBatchId };
                 bullets.push(b);
             } else {
                 b._last = { wx: b.wx, wy: b.wy, x: b.x, y: b.y };
                 Object.assign(b, { wx, wy, x, y, active });
                 b._lastUpdateTick = gameTick;
+                b._seenBatch = currentBulletBatchId;
             }
             return;
         }
@@ -331,7 +349,6 @@
     // Timing for smoothing
     const REMOTE_INTERP_TICKS = 4;
     const REMOTE_EXTRAP_TICKS = 15;
-    let gameTick = 0; // increases each animation frame to approximate console's game_tick_count
 
     // Simple rendering of one map: choose the map containing you, else center (4,4)
     function draw() {
