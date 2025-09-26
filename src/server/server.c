@@ -341,6 +341,20 @@ static void send_full_map_to(int clientIdx) {
     }
 }
 
+static void send_map_to(int clientIdx, int wx, int wy) {
+    if (clientIdx < 0 || clientIdx >= MAX_CLIENTS) return;
+    if (!clients[clientIdx].connected) return;
+    if (wx < 0 || wx >= WORLD_W || wy < 0 || wy >= WORLD_H) return;
+    char line[64];
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            char ch = world[wy][wx].tiles[y][x];
+            int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", wx, wy, x, y, ch);
+            send_text_to_client(clientIdx, line, n);
+        }
+    }
+}
+
 static FILE *try_open_map(const char *prefix, int mx, int my) {
     char path[256]; snprintf(path, sizeof(path), "%smaps/x%d-y%d.txt", prefix, mx, my);
     return fopen(path, "rb");
@@ -850,8 +864,10 @@ int main(int argc, char **argv) {
                                 if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
                             }
                             send_text_to_client(idx, buf, off);
-                            // now send full map snapshot
-                            send_full_map_to(idx);
+                    // now send only the current map snapshot to reduce initial load
+                    send_map_to(idx, clients[idx].worldX, clients[idx].worldY);
+                            // now send only the current map snapshot (for WS clients)
+                            send_map_to(idx, clients[idx].worldX, clients[idx].worldY);
                         }
                     }
                 } else {
@@ -948,8 +964,8 @@ int main(int argc, char **argv) {
 #endif
                     clients[i].sock = 0;
                 } else if (strncmp(p, "PING ", 5) == 0) {
-                    // Reflect back the timestamp for RTT measurement
-                    char line[64]; int rn = snprintf(line, sizeof(line), "PONG %s\n", p + 5);
+                    // Reflect back the timestamp/token for RTT measurement
+                    char line[128]; int rn = snprintf(line, sizeof(line), "PONG %s\n", p + 5);
                     send_text_to_client(i, line, rn);
                 } else if (sscanf(p, "INPUT %d %d %d", &dx, &dy, &shoot) == 3) {
                     clients[i].lastActive = time(NULL);

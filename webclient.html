@@ -64,6 +64,8 @@
     let recvBuf = "";
     let pingTimer = null;
     let inputTimer = null;
+    // Track whether initial map for our world tile is fully received
+    let initialMapLoaded = false;
     let joined = false; // becomes true after we receive our PLAYER line with active=1
 
     // World state
@@ -226,7 +228,7 @@
             const [id, wx, wy, x, y, color, active, hp, invTicks, superTicks, score] = parseInts(parts, 1);
             ensurePlayersSize(id);
             Object.assign(players[id], { wx, wy, x, y, color, active, hp, invincibleTicks: invTicks, superTicks, score });
-            if (id === youId && active) joined = true;
+            if (id === youId && active) { joined = true; initialMapLoaded = false; }
             return;
         }
         if (tag === "BULLET") {
@@ -254,6 +256,12 @@
             const ch = chToken.length ? chToken[0] : '.';
             if (wy>=0 && wy<WORLD_H && wx>=0 && wx<WORLD_W && y>=0 && y<MAP_HEIGHT && x>=0 && x<MAP_WIDTH) {
                 worldTiles[wy][wx][y][x] = ch;
+                if (youId >= 0 && players[youId] && players[youId].active) {
+                    if (wx === players[youId].wx && wy === players[youId].wy) {
+                        // Mark loaded when we've seen the last tile of the map (39,17)
+                        if (x === MAP_WIDTH - 1 && y === MAP_HEIGHT - 1) initialMapLoaded = true;
+                    }
+                }
             }
             return;
         }
@@ -278,7 +286,7 @@
         stopNetworkTimers();
         pingTimer = setInterval(() => {
             if (!socket || socket.readyState !== 1) return;
-            const token = performance.now().toFixed(3);
+            const token = String(Date.now());
             pingOutstanding[token] = performance.now();
             sendLine(`PING ${token}`);
             lastPingAt = performance.now();
@@ -308,7 +316,7 @@
         // Use monospace glyph rendering to match console visuals
         ctx.font = `${TILE_SIZE - 2}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
         ctx.textBaseline = "top";
-        // We always draw the map; if our player hasn't arrived yet, overlay a loading banner
+        // We always draw the map; overlay loading until initial map for our current world tile is complete
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const ch = worldTiles[wy][wx][y][x];
@@ -358,10 +366,10 @@
             ctx.fillText('@', px + 1, py + 1);
         }
 
-        // HUD: HP and Ping (show loading hint if player not yet present)
+        // HUD: HP and Ping (show loading hint while preparing)
         const hudY = MAP_HEIGHT * TILE_SIZE + 4;
         ctx.fillStyle = "#dbe2f1";
-        const hpText = me ? ("HP: " + me.hp) : "Loading...";
+        const hpText = (!me || !initialMapLoaded) ? "Loading..." : ("HP: " + me.hp);
         const pingText = "Ping: " + (pingMs >= 0 ? (pingMs + " ms") : "-- ms");
         ctx.fillText(hpText + "   " + pingText, 8, hudY);
 
@@ -374,9 +382,9 @@
         const rightX = leftX + scoreboardWidthPx;
         ctx.fillText("Scoreboard", leftX, titleY);
         ctx.fillText("Minimap", rightX, titleY);
-        if (!me) {
+        if (!me || !initialMapLoaded) {
             ctx.fillStyle = "#9fb2d6";
-            ctx.fillText("Waiting for player state...", leftX, titleY - TILE_SIZE + 2);
+            ctx.fillText("Loading starting map...", leftX, titleY - TILE_SIZE + 2);
         }
 
         // Scoreboard (4x4)
