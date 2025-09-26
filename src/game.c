@@ -225,10 +225,13 @@ int game_attempt_move_player(int dx, int dy) {
     }
         return 0;
     }
-    if (nx < 0) return try_enter_map(curWorldX - 1, curWorldY, MAP_WIDTH - 1, ny);
-    if (nx >= MAP_WIDTH) return try_enter_map(curWorldX + 1, curWorldY, 0, ny);
-    if (ny < 0) return try_enter_map(curWorldX, curWorldY - 1, nx, MAP_HEIGHT - 1);
-    if (ny >= MAP_HEIGHT) return try_enter_map(curWorldX, curWorldY + 1, nx, 0);
+    // When crossing world boundaries, preserve the player's current coordinate on the non-crossing axis
+    int entryX = playerPos.x;
+    int entryY = playerPos.y;
+    if (nx < 0) return try_enter_map(curWorldX - 1, curWorldY, MAP_WIDTH - 1, entryY);
+    if (nx >= MAP_WIDTH) return try_enter_map(curWorldX + 1, curWorldY, 0, entryY);
+    if (ny < 0) return try_enter_map(curWorldX, curWorldY - 1, entryX, MAP_HEIGHT - 1);
+    if (ny >= MAP_HEIGHT) return try_enter_map(curWorldX, curWorldY + 1, entryX, 0);
     return 0;
 }
 

@@ -987,18 +987,45 @@ int main(int argc, char **argv) {
                     if (dx < 0) clients[i].facing = DIR_LEFT; else if (dx > 0) clients[i].facing = DIR_RIGHT; else if (dy < 0) clients[i].facing = DIR_UP; else if (dy > 0) clients[i].facing = DIR_DOWN;
                     int oldWX = clients[i].worldX;
                     int oldWY = clients[i].worldY;
-                    int nx = clients[i].pos.x + dx;
-                    int ny = clients[i].pos.y + dy;
-                    // clamp
+                    int curx = clients[i].pos.x;
+                    int cury = clients[i].pos.y;
+                    int nx = curx + dx;
+                    int ny = cury + dy;
+                    // Preserve orthogonal axis on world transitions and avoid double-crossing on diagonals
+                    int crossedX = 0;
                     if (nx < 0) {
-                        if (clients[i].worldX > 0 && is_open(&world[clients[i].worldY][clients[i].worldX-1], MAP_WIDTH-1, ny)) { clients[i].worldX--; nx = MAP_WIDTH-1; }
+                        int entryY = cury;
+                        if (clients[i].worldX > 0 && is_open(&world[clients[i].worldY][clients[i].worldX-1], MAP_WIDTH-1, entryY)) {
+                            clients[i].worldX--;
+                            nx = MAP_WIDTH - 1;
+                            ny = entryY;
+                            crossedX = 1;
+                        }
                     } else if (nx >= MAP_WIDTH) {
-                        if (clients[i].worldX < WORLD_W-1 && is_open(&world[clients[i].worldY][clients[i].worldX+1], 0, ny)) { clients[i].worldX++; nx = 0; }
+                        int entryY = cury;
+                        if (clients[i].worldX < WORLD_W - 1 && is_open(&world[clients[i].worldY][clients[i].worldX+1], 0, entryY)) {
+                            clients[i].worldX++;
+                            nx = 0;
+                            ny = entryY;
+                            crossedX = 1;
+                        }
                     }
-                    if (ny < 0) {
-                        if (clients[i].worldY > 0 && is_open(&world[clients[i].worldY-1][clients[i].worldX], nx, MAP_HEIGHT-1)) { clients[i].worldY--; ny = MAP_HEIGHT-1; }
-                    } else if (ny >= MAP_HEIGHT) {
-                        if (clients[i].worldY < WORLD_H-1 && is_open(&world[clients[i].worldY+1][clients[i].worldX], nx, 0)) { clients[i].worldY++; ny = 0; }
+                    if (!crossedX) {
+                        if (ny < 0) {
+                            int entryX = curx;
+                            if (clients[i].worldY > 0 && is_open(&world[clients[i].worldY-1][clients[i].worldX], entryX, MAP_HEIGHT-1)) {
+                                clients[i].worldY--;
+                                ny = MAP_HEIGHT - 1;
+                                nx = entryX;
+                            }
+                        } else if (ny >= MAP_HEIGHT) {
+                            int entryX = curx;
+                            if (clients[i].worldY < WORLD_H - 1 && is_open(&world[clients[i].worldY+1][clients[i].worldX], entryX, 0)) {
+                                clients[i].worldY++;
+                                ny = 0;
+                                nx = entryX;
+                            }
+                        }
                     }
                     if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT && is_open(&world[clients[i].worldY][clients[i].worldX], nx, ny)) {
                         // Disallow stepping into a tile occupied by another player in the same map
