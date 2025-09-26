@@ -20,12 +20,19 @@
 */
 
 const http = require('http');
+const https = require('https');
 const net = require('net');
 const crypto = require('crypto');
+const fs = require('fs');
 
-const HTTP_PORT = parseInt(process.env.PORT || '8080', 10);
+const SSL_CERT = process.env.SSL_CERT || '';
+const SSL_KEY = process.env.SSL_KEY || '';
+const SSL_CA = process.env.SSL_CA || '';
+const HOST = process.env.HOST || '0.0.0.0';
 const TARGET_HOST = process.env.TARGET_HOST || '127.0.0.1';
 const TARGET_PORT = parseInt(process.env.TARGET_PORT || '5555', 10);
+const DEFAULT_PORT = 3000; // unique bridge port; no TLS required
+const HTTP_PORT = parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
 
 function makeWebSocketAccept(secWebSocketKey) {
   const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -121,10 +128,23 @@ function writeWsClose(socket, code, reason) {
   socket.write(buildWsFrame(body, 0x8));
 }
 
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-  res.end('WebSocket bridge is running. Connect via ws(s)://host/ws');
-});
+let server;
+let scheme;
+if (SSL_CERT && SSL_KEY) {
+  const opts = { key: fs.readFileSync(SSL_KEY), cert: fs.readFileSync(SSL_CERT) };
+  if (SSL_CA) { opts.ca = fs.readFileSync(SSL_CA); }
+  server = https.createServer(opts, (req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('WebSocket bridge (TLS) is running. Connect via wss://host:PORT/ws');
+  });
+  scheme = 'wss';
+} else {
+  server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('WebSocket bridge is running. Connect via ws://host:PORT/ws');
+  });
+  scheme = 'ws';
+}
 
 server.on('upgrade', (req, socket, head) => {
   if (!req.url || !req.headers.upgrade || req.headers.upgrade.toLowerCase() !== 'websocket') {
@@ -208,9 +228,22 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('end', () => { safeClose(); });
 });
 
-server.listen(HTTP_PORT, () => {
-  console.log(`[bridge] Listening on http://127.0.0.1:${HTTP_PORT}/ws → tcp://${TARGET_HOST}:${TARGET_PORT}`);
-  console.log(`[bridge] Place behind TLS proxy to expose wss://runcode.at/ws`);
-});
+function listenWithRetry(port, attemptsLeft) {
+  server.once('error', (err) => {
+    if (err && err.code === 'EADDRINUSE' && attemptsLeft > 0) {
+      const next = port + 1;
+      console.error(`[bridge] Port ${port} in use. Trying ${next} …`);
+      setTimeout(() => listenWithRetry(next, attemptsLeft - 1), 100);
+      return;
+    }
+    console.error('[bridge] Failed to start server:', err && err.message ? err.message : err);
+    process.exit(1);
+  });
+  server.listen(port, HOST, () => {
+    console.log(`[bridge] Listening on ${scheme}://${HOST}:${port}/ws → tcp://${TARGET_HOST}:${TARGET_PORT}`);
+  });
+}
+
+listenWithRetry(HTTP_PORT, 20);
 
 

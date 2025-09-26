@@ -77,14 +77,8 @@
 
     function setStatus(text) { statusEl.textContent = text; }
 
-    // Candidate WebSocket endpoints on runcode.at (fixed URL). The server must expose a WS bridge to the TCP game.
-    const CANDIDATE_ENDPOINTS = [
-        "wss://runcode.at/ws",
-        "wss://runcode.at/dungeon",
-        "wss://runcode.at/",
-        "wss://runcode.at:5555/",
-        "ws://runcode.at:5555/"
-    ];
+    // Single fixed endpoint (bridge default: ws on port 3000)
+    const FIXED_ENDPOINT = "ws://runcode.at:3000/ws";
 
     let connectAbort = false;
     async function connect() {
@@ -94,12 +88,8 @@
         youId = -1;
         connectAbort = false;
 
-        for (const url of CANDIDATE_ENDPOINTS) {
-            if (connectAbort) return;
-            const ok = await tryOneEndpoint(url);
-            if (ok) return; // connected and handlers installed
-        }
-        setStatus("Unable to connect. A WebSocket bridge on runcode.at is required.");
+        const ok = await tryOneEndpoint(FIXED_ENDPOINT);
+        if (!ok) setStatus("Unable to connect to " + FIXED_ENDPOINT + ". Check bridge.");
         btnConnect.disabled = false;
         btnDisconnect.disabled = true;
     }
