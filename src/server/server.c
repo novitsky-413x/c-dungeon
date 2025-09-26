@@ -209,6 +209,14 @@ static int ws_handshake(Client *c) {
     const char *end = strstr(c->wsBuf, "\r\n\r\n");
     if (!end) end = strstr(c->wsBuf, "\n\n"); // be tolerant
     if (!end) return 0; // need more
+    // Debug: print the received request headers for troubleshooting
+    int hdrLen = (int)(end - c->wsBuf);
+    if (hdrLen > 0 && hdrLen < (int)sizeof(c->wsBuf)) {
+        char snap[512]; int sl = hdrLen < (int)sizeof(snap)-1 ? hdrLen : (int)sizeof(snap)-1;
+        memcpy(snap, c->wsBuf, sl); snap[sl] = '\0';
+        printf("[ws] Handshake request (first %d bytes):\n%.*s\n", sl, sl, snap);
+        fflush(stdout);
+    }
     // Robust header parse: find Sec-WebSocket-Key case-insensitively, ignoring whitespace
     char key[128] = {0};
     const char *p = c->wsBuf;
@@ -246,7 +254,7 @@ static int ws_handshake(Client *c) {
         }
         p = nl + 1;
     }
-    if (key[0] == '\0') return -1;
+    if (key[0] == '\0') { printf("[ws] Missing Sec-WebSocket-Key, closing.\n"); fflush(stdout); return -1; }
     const char *GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     char concat[256]; snprintf(concat, sizeof(concat), "%s%s", key, GUID);
     uint8_t digest[20]; sha1((const uint8_t*)concat, strlen(concat), digest);
@@ -257,9 +265,8 @@ static int ws_handshake(Client *c) {
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-    if (send(c->sock, resp, rn, 0) < 0) {
-        return -1;
-    }
+    if (send(c->sock, resp, rn, 0) < 0) { printf("[ws] Send 101 failed.\n"); fflush(stdout); return -1; }
+    printf("[ws] Sent 101 Switching Protocols.\n"); fflush(stdout);
     c->wsHandshakeDone = 1;
     c->wsBufLen = 0;
     return 1;
