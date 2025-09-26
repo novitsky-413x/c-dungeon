@@ -224,7 +224,7 @@ static void send_full_map_to(int clientIdx) {
                 for (int x = 0; x < MAP_WIDTH; ++x) {
                     char ch = world[wy][wx].tiles[y][x];
                     int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", wx, wy, x, y, ch);
-                    send(clients[clientIdx].sock, line, n, 0);
+                    send_text_to_client(clientIdx, line, n);
                 }
             }
         }
@@ -709,17 +709,18 @@ int main(int argc, char **argv) {
             // If WS framed, deframe text payload into buf
             if (clients[i].isWebSocket) {
                 // Simple, single-frame text parser (FIN + TEXT, masked)
-                const unsigned char *d = (const unsigned char*)buf;
+                unsigned char *db = (unsigned char*)buf;
                 if (n < 2) continue;
-                int masked = (d[1] & 0x80) != 0; size_t len = (size_t)(d[1] & 0x7F); size_t off = 2;
-                if (len == 126) { if (n < 4) continue; len = (d[2]<<8)|d[3]; off = 4; }
-                else if (len == 127) { if (n < 10) continue; len = (size_t)d[9]; off = 10; }
+                int masked = (db[1] & 0x80) != 0; size_t len = (size_t)(db[1] & 0x7F); size_t off = 2;
+                if (len == 126) { if (n < 4) continue; len = (db[2]<<8)|db[3]; off = 4; }
+                else if (len == 127) { if (n < 10) continue; len = (size_t)db[9]; off = 10; }
                 unsigned char mask[4] = {0,0,0,0};
-                if (masked) { if ((int)off + 4 > n) continue; memcpy(mask, d+off, 4); off += 4; }
+                if (masked) { if ((int)off + 4 > n) continue; memcpy(mask, db+off, 4); off += 4; }
                 if ((int)(off + len) > n) continue;
-                for (size_t k = 0; k < len; ++k) d[(int)off + (int)k] = d[(int)off + (int)k] ^ mask[k & 3];
-                d = d + off; n = (int)len; ((char*)d)[n] = '\0';
-                memcpy(buf, d, n+1);
+                unsigned char *payload = db + off;
+                for (size_t k = 0; k < len; ++k) payload[k] ^= mask[k & 3];
+                n = (int)len; payload[n] = '\0';
+                memmove(buf, payload, n + 1);
             }
 
             // parse simple commands: INPUT dx dy shoot | PING t
