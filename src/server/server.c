@@ -406,7 +406,8 @@ static void broadcast_state(void) {
     }
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         if (!clients[i].connected) continue;
-        if (clients[i].isWebSocket && clients[i].wsHandshakeDone) ws_send_text_frame(clients[i].sock, buf, off);
+        if (clients[i].isWebSocket && !clients[i].wsHandshakeDone) continue; // do not send before WS handshake
+        if (clients[i].isWebSocket) ws_send_text_frame(clients[i].sock, buf, off);
         else send(clients[i].sock, buf, off, 0);
     }
 }
@@ -416,7 +417,8 @@ static void broadcast_tile(int wx, int wy, int x, int y, char ch) {
     int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", wx, wy, x, y, ch);
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         if (!clients[i].connected) continue;
-        if (clients[i].isWebSocket && clients[i].wsHandshakeDone) ws_send_text_frame(clients[i].sock, line, n);
+        if (clients[i].isWebSocket && !clients[i].wsHandshakeDone) continue; // wait for WS handshake
+        if (clients[i].isWebSocket) ws_send_text_frame(clients[i].sock, line, n);
         else send(clients[i].sock, line, n, 0);
     }
 }
