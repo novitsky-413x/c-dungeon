@@ -734,6 +734,22 @@ int main(int argc, char **argv) {
                     send_text_to_client(idx, you, n);
                     // send full map snapshot to ensure client renders current walls/tiles
                     send_full_map_to(idx);
+                    // send an immediate state frame so clients can show themselves without waiting a tick
+                    char line[128];
+                    char buf[4096]; int off = 0;
+                    int n0 = snprintf(line, sizeof(line), "TICK %d\n", g_tick_counter);
+                    if (n0 > 0 && off + n0 < (int)sizeof(buf)) { memcpy(buf + off, line, n0); off += n0; }
+                    for (int i = 0; i < MAX_CLIENTS; ++i) {
+                        int active = clients[i].connected ? 1 : 0;
+                        int pn = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks, clients[i].score);
+                        if (off + pn < (int)sizeof(buf)) { memcpy(buf + off, line, pn); off += pn; }
+                    }
+                    for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
+                        if (!bullets[b].active) continue;
+                        int bn = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
+                        if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
+                    }
+                    send_text_to_client(idx, buf, off);
                 } else {
                     const char *full = "FULL\n"; send(cs, full, (int)strlen(full), 0);
 #ifdef _WIN32
@@ -819,6 +835,22 @@ int main(int argc, char **argv) {
                             char you[32]; int yn = snprintf(you, sizeof(you), "YOU %d\n", idx);
                             send_text_to_client(idx, you, yn);
                             send_full_map_to(idx);
+                            // immediate state frame for WS client
+                            char line[128];
+                            char buf[4096]; int off = 0;
+                            int n0 = snprintf(line, sizeof(line), "TICK %d\n", g_tick_counter);
+                            if (n0 > 0 && off + n0 < (int)sizeof(buf)) { memcpy(buf + off, line, n0); off += n0; }
+                            for (int i = 0; i < MAX_CLIENTS; ++i) {
+                                int active = clients[i].connected ? 1 : 0;
+                                int pn = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks, clients[i].score);
+                                if (off + pn < (int)sizeof(buf)) { memcpy(buf + off, line, pn); off += pn; }
+                            }
+                            for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
+                                if (!bullets[b].active) continue;
+                                int bn = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
+                                if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
+                            }
+                            send_text_to_client(idx, buf, off);
                         }
                     }
                 } else {

@@ -64,6 +64,7 @@
     let recvBuf = "";
     let pingTimer = null;
     let inputTimer = null;
+    let joined = false; // becomes true after we receive our PLAYER line with active=1
 
     // World state
     const worldTiles = new Array(WORLD_H);
@@ -92,6 +93,7 @@
         btnDisconnect.disabled = true;
         recvBuf = "";
         youId = -1;
+        joined = false;
         connectAbort = false;
 
         const target = (serverUrlInput.value && serverUrlInput.value.trim()) ? serverUrlInput.value.trim() : DEFAULT_ENDPOINT;
@@ -214,6 +216,7 @@
             const [id, wx, wy, x, y, color, active, hp, invTicks, superTicks, score] = parseInts(parts, 1);
             ensurePlayersSize(id);
             Object.assign(players[id], { wx, wy, x, y, color, active, hp, invincibleTicks: invTicks, superTicks, score });
+            if (id === youId && active) joined = true;
             return;
         }
         if (tag === "BULLET") {
@@ -294,6 +297,7 @@
         // Use monospace glyph rendering to match console visuals
         ctx.font = `${TILE_SIZE - 2}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
         ctx.textBaseline = "top";
+        if (!joined) { drawLoading(); return; }
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const ch = worldTiles[wy][wx][y][x];
@@ -408,6 +412,38 @@
         const palette = ["#22d3ee","#ef4444","#22c55e","#facc15","#d946ef","#14b8a6","#f97316","#60a5fa",
                          "#f472b6","#38bdf8","#fb7185","#94a3b8","#fca5a5","#e5e7eb","#86efac","#f8b4a0"]; // up to 16
         return palette[idx % palette.length];
+    }
+
+    // Loading screen similar to console: dim dots, sparkles, LOADING text
+    function drawLoading() {
+        // Background grid
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                const px = x * TILE_SIZE;
+                const py = y * TILE_SIZE;
+                ctx.fillStyle = "#6b7280"; // dim dot
+                ctx.fillText('.', px + 1, py + 1);
+            }
+        }
+        // Sparkles based on time
+        const tick = Math.floor(performance.now() / 100);
+        const sparkCount = 30;
+        for (let i = 0; i < sparkCount; i++) {
+            const seed = (tick * 1103515245 + 12345 + i * 2654435761) >>> 0;
+            const sx = seed % MAP_WIDTH;
+            const sy = (seed >>> 8) % MAP_HEIGHT;
+            const px = sx * TILE_SIZE;
+            const py = sy * TILE_SIZE;
+            ctx.fillStyle = "#facc15";
+            ctx.fillText('*', px + 1, py + 1);
+        }
+        // LOADING text centered
+        const text = "LOADING";
+        const charW = ctx.measureText('M').width;
+        const cx = Math.floor((MAP_WIDTH - text.length) / 2) * charW + 1;
+        const cy = Math.floor(MAP_HEIGHT / 2) * TILE_SIZE + 1;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(text, cx, cy);
     }
 
     // Main loop
