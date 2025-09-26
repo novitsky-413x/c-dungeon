@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdint.h>
+#include <ctype.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -165,6 +166,23 @@ static void sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
     out[16]=(h4>>24)&0xFF; out[17]=(h4>>16)&0xFF; out[18]=(h4>>8)&0xFF; out[19]=h4&0xFF;
 }
 
+// --- Minimal case-insensitive substring search (ASCII) ---
+static const char *strcasestr_local(const char *haystack, const char *needle) {
+    if (!*needle) return haystack;
+    size_t nlen = strlen(needle);
+    for (const char *p = haystack; *p; ++p) {
+        size_t i = 0;
+        while (i < nlen) {
+            char a = p[i]; char b = needle[i];
+            if (!a) return NULL;
+            if (tolower((unsigned char)a) != tolower((unsigned char)b)) break;
+            i++;
+        }
+        if (i == nlen) return p;
+    }
+    return NULL;
+}
+
 static int ws_send_text_frame(sock_t s, const char *data, int len) {
     // build a server-to-client unmasked text frame
     uint8_t hdr[10]; int hlen = 0;
@@ -183,7 +201,7 @@ static int ws_handshake(Client *c) {
     c->wsBuf[c->wsBufLen] = '\0';
     const char *end = strstr(c->wsBuf, "\r\n\r\n");
     if (!end) return 0; // need more
-    const char *keyh = strcasestr(c->wsBuf, "Sec-WebSocket-Key:");
+    const char *keyh = strcasestr_local(c->wsBuf, "Sec-WebSocket-Key:");
     if (!keyh) return -1;
     keyh += strlen("Sec-WebSocket-Key:");
     while (*keyh==' ' || *keyh=='\t') keyh++;
