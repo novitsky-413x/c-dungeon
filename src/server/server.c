@@ -112,53 +112,45 @@ static int base64_encode(const uint8_t *in, int inlen, char *out, int outcap) {
 static uint32_t rol32(uint32_t v, int r) { return (v << r) | (v >> (32 - r)); }
 static void sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
     uint32_t h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
-    size_t ml = len * 8;
-    size_t total = len + 1 + 8; // 0x80 + 64-bit length
-    size_t pad = (64 - (total % 64)) % 64;
-    size_t nblocks = (len + 1 + pad + 8) / 64;
-    for (size_t b = 0; b < nblocks; ++b) {
-        uint8_t chunk[64];
-        size_t off = b * 64;
-        for (int i = 0; i < 64; ++i) {
-            size_t idx = off + i;
-            if (idx < len) chunk[i] = data[idx];
-            else if (idx == len) chunk[i] = 0x80;
-            else if (idx < len + 1 + pad) chunk[i] = 0x00;
-            else {
-                size_t shift = (len + 1 + pad + 8 - 1) - idx;
-                (void)shift;
-                break;
-            }
-        }
-        // append 64-bit big-endian length at end of last block
-        if (off + 64 >= len + 1 + pad + 8) {
-            uint8_t *p = chunk + 64 - 8;
-            p[0] = (uint8_t)((ml >> 56) & 0xFF);
-            p[1] = (uint8_t)((ml >> 48) & 0xFF);
-            p[2] = (uint8_t)((ml >> 40) & 0xFF);
-            p[3] = (uint8_t)((ml >> 32) & 0xFF);
-            p[4] = (uint8_t)((ml >> 24) & 0xFF);
-            p[5] = (uint8_t)((ml >> 16) & 0xFF);
-            p[6] = (uint8_t)((ml >> 8) & 0xFF);
-            p[7] = (uint8_t)((ml >> 0) & 0xFF);
-        }
+    size_t newlen = len + 1; while ((newlen % 64) != 56) newlen++;
+    size_t total = newlen + 8;
+    uint8_t *msg = (uint8_t*)malloc(total);
+    if (!msg) return;
+    memcpy(msg, data, len);
+    msg[len] = 0x80;
+    memset(msg + len + 1, 0, newlen - (len + 1));
+    uint64_t bits = (uint64_t)len * 8ULL;
+    msg[newlen + 0] = (uint8_t)((bits >> 56) & 0xFF);
+    msg[newlen + 1] = (uint8_t)((bits >> 48) & 0xFF);
+    msg[newlen + 2] = (uint8_t)((bits >> 40) & 0xFF);
+    msg[newlen + 3] = (uint8_t)((bits >> 32) & 0xFF);
+    msg[newlen + 4] = (uint8_t)((bits >> 24) & 0xFF);
+    msg[newlen + 5] = (uint8_t)((bits >> 16) & 0xFF);
+    msg[newlen + 6] = (uint8_t)((bits >> 8) & 0xFF);
+    msg[newlen + 7] = (uint8_t)((bits >> 0) & 0xFF);
+
+    for (size_t off = 0; off < total; off += 64) {
         uint32_t w[80];
-        for (int i = 0; i < 16; ++i) {
-            w[i] = ((uint32_t)chunk[i*4+0] << 24) | ((uint32_t)chunk[i*4+1] << 16) | ((uint32_t)chunk[i*4+2] << 8) | ((uint32_t)chunk[i*4+3]);
+        for (int i = 0; i < 16; i++) {
+            w[i] = ((uint32_t)msg[off + i*4 + 0] << 24) |
+                   ((uint32_t)msg[off + i*4 + 1] << 16) |
+                   ((uint32_t)msg[off + i*4 + 2] << 8)  |
+                   ((uint32_t)msg[off + i*4 + 3]);
         }
-        for (int i = 16; i < 80; ++i) w[i] = rol32(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
-        uint32_t a = h0, b0 = h1, c = h2, d = h3, e = h4;
-        for (int i = 0; i < 80; ++i) {
+        for (int i = 16; i < 80; i++) w[i] = rol32(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
+        uint32_t a = h0, b = h1, c = h2, d = h3, e = h4;
+        for (int i = 0; i < 80; i++) {
             uint32_t f, k;
-            if (i < 20) { f = (b0 & c) | ((~b0) & d); k = 0x5A827999; }
-            else if (i < 40) { f = b0 ^ c ^ d; k = 0x6ED9EBA1; }
-            else if (i < 60) { f = (b0 & c) | (b0 & d) | (c & d); k = 0x8F1BBCDC; }
-            else { f = b0 ^ c ^ d; k = 0xCA62C1D6; }
+            if (i < 20) { f = (b & c) | ((~b) & d); k = 0x5A827999; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC; }
+            else { f = b ^ c ^ d; k = 0xCA62C1D6; }
             uint32_t temp = rol32(a, 5) + f + e + k + w[i];
-            e = d; d = c; c = rol32(b0, 30); b0 = a; a = temp;
+            e = d; d = c; c = rol32(b, 30); b = a; a = temp;
         }
-        h0 += a; h1 += b0; h2 += c; h3 += d; h4 += e;
+        h0 += a; h1 += b; h2 += c; h3 += d; h4 += e;
     }
+    free(msg);
     out[0]= (h0>>24)&0xFF; out[1]=(h0>>16)&0xFF; out[2]=(h0>>8)&0xFF; out[3]=h0&0xFF;
     out[4]= (h1>>24)&0xFF; out[5]=(h1>>16)&0xFF; out[6]=(h1>>8)&0xFF; out[7]=h1&0xFF;
     out[8]= (h2>>24)&0xFF; out[9]=(h2>>16)&0xFF; out[10]=(h2>>8)&0xFF; out[11]=h2&0xFF;
