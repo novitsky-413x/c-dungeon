@@ -21,7 +21,8 @@
 <body>
 <div class="wrap">
     <div class="row">
-        <button id="connect">Reconnect</button>
+        <input id="serverUrl" type="text" placeholder="wss://host[:port]/path" value="wss://runcode.at/ws" style="min-width:320px" />
+        <button id="connect">Connect</button>
         <button id="disconnect" disabled>Disconnect</button>
         <div class="spacer"></div>
         <div id="status" class="status">Idle</div>
@@ -41,7 +42,7 @@
     const WORLD_H = 9;
     const TILE_SIZE = 16; // pixels per tile in canvas
     const VIEW_TILE_W = MAP_WIDTH;
-    const VIEW_TILE_H = MAP_HEIGHT + 4; // extra HUD rows
+    const VIEW_TILE_H = MAP_HEIGHT + 14; // extra HUD rows for HUD + scoreboard + minimap
     const CANVAS_W = VIEW_TILE_W * TILE_SIZE;
     const CANVAS_H = VIEW_TILE_H * TILE_SIZE;
 
@@ -53,11 +54,16 @@
     const statusEl = document.getElementById("status");
     const btnConnect = document.getElementById("connect");
     const btnDisconnect = document.getElementById("disconnect");
+    const serverUrlInput = document.getElementById("serverUrl");
 
     let socket = null;
     let youId = -1;
     let lastPingAt = 0;
+    let pingMs = -1;
+    const pingOutstanding = Object.create(null);
     let recvBuf = "";
+    let pingTimer = null;
+    let inputTimer = null;
 
     // World state
     const worldTiles = new Array(WORLD_H);
@@ -77,21 +83,23 @@
 
     function setStatus(text) { statusEl.textContent = text; }
 
-    // Single fixed endpoint (proxied via nginx to native WS server)
-    const FIXED_ENDPOINT = "wss://runcode.at/ws";
+    // Default endpoint; can be overridden via input
+    const DEFAULT_ENDPOINT = "wss://runcode.at/ws";
 
     let connectAbort = false;
     async function connect() {
         btnConnect.disabled = true;
-        btnDisconnect.disabled = false;
+        btnDisconnect.disabled = true;
         recvBuf = "";
         youId = -1;
         connectAbort = false;
 
-        const ok = await tryOneEndpoint(FIXED_ENDPOINT);
-        if (!ok) setStatus("Unable to connect to " + FIXED_ENDPOINT + ". Check bridge.");
-        btnConnect.disabled = false;
-        btnDisconnect.disabled = true;
+        const target = (serverUrlInput.value && serverUrlInput.value.trim()) ? serverUrlInput.value.trim() : DEFAULT_ENDPOINT;
+        const ok = await tryOneEndpoint(target);
+        if (!ok) {
+            setStatus("Unable to connect to " + target + ". Check server.");
+            btnConnect.disabled = false;
+        }
     }
 
     function tryOneEndpoint(url) {
@@ -113,14 +121,21 @@
                 socket = ws;
                 setStatus("Connected: " + url + " (HELLO)");
                 sendLine("HELLO");
+                startNetworkTimers();
+                btnDisconnect.disabled = false;
                 resolve(true);
             };
             ws.onmessage = (ev) => {
                 let text;
                 if (typeof ev.data === "string") text = ev.data;
                 else text = new TextDecoder().decode(ev.data);
+                // Each server tick arrives as one WS message containing a batch of lines.
+                // Clear transient arrays so we render only the latest authoritative tick.
+                bullets.length = 0;
+                enemies.length = 0;
                 recvBuf += text;
                 processBuffer();
+                draw();
             };
             ws.onerror = () => {
                 if (!opened) setStatus("Failed: " + url);
@@ -131,6 +146,7 @@
                     btnConnect.disabled = false;
                     btnDisconnect.disabled = true;
                     socket = null;
+                    stopNetworkTimers();
                 }
                 if (!opened) resolve(false); // try next endpoint
             };
@@ -178,6 +194,17 @@
         if (tag === "YOU") {
             if (parts.length >= 2) youId = parseInt(parts[1], 10);
             setStatus(`Joined, you are id ${youId}`);
+            return;
+        }
+        if (tag === "PONG") {
+            if (parts.length >= 2) {
+                const token = parts.slice(1).join(" ");
+                const sentAt = pingOutstanding[token];
+                if (sentAt) {
+                    pingMs = Math.round(performance.now() - sentAt);
+                    delete pingOutstanding[token];
+                }
+            }
             return;
         }
         if (tag === "FULL") { setStatus("Server full"); return; }
@@ -231,19 +258,28 @@
         return { dx, dy, shoot };
     }
 
-    function tickNetwork(nowMs) {
-        // Periodic ping at ~1 Hz
-        if (socket && socket.readyState === 1) {
-            if (!lastPingAt || nowMs - lastPingAt >= 1000) {
-                sendLine(`PING ${nowMs.toFixed(3)}`);
-                lastPingAt = nowMs;
-            }
-        }
-        // Send current input state; the native client sends only on keypresses, but sending each frame is fine for a simple client.
-        const { dx, dy, shoot } = computeInput();
-        if (socket && socket.readyState === 1) {
+    // Server-driven pacing: send inputs on a fixed cadence and ping at 1 Hz
+    const INPUT_INTERVAL_MS = 100;
+    function startNetworkTimers() {
+        stopNetworkTimers();
+        pingTimer = setInterval(() => {
+            if (!socket || socket.readyState !== 1) return;
+            const token = performance.now().toFixed(3);
+            pingOutstanding[token] = performance.now();
+            sendLine(`PING ${token}`);
+            lastPingAt = performance.now();
+        }, 1000);
+        inputTimer = setInterval(() => {
+            if (!socket || socket.readyState !== 1) return;
+            const { dx, dy, shoot } = computeInput();
             if (dx !== 0 || dy !== 0 || shoot !== 0) sendLine(`INPUT ${dx} ${dy} ${shoot}`);
-        }
+        }, INPUT_INTERVAL_MS);
+    }
+    function stopNetworkTimers() {
+        if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+        if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
+        for (const k in pingOutstanding) delete pingOutstanding[k];
+        lastPingAt = 0; pingMs = -1;
     }
 
     // Simple rendering of one map: choose the map containing you, else center (4,4)
@@ -255,71 +291,128 @@
         const wx = me ? clamp(players[youId].wx, 0, WORLD_W - 1) : 4;
         const wy = me ? clamp(players[youId].wy, 0, WORLD_H - 1) : 4;
 
-        // Draw tiles
+        // Use monospace glyph rendering to match console visuals
+        ctx.font = `${TILE_SIZE - 2}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
+        ctx.textBaseline = "top";
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const ch = worldTiles[wy][wx][y][x];
                 const px = x * TILE_SIZE;
                 const py = y * TILE_SIZE;
-                switch (ch) {
-                    case '#': ctx.fillStyle = "#cdd6f4"; break; // wall bright
-                    case 'X': ctx.fillStyle = "#f9e2af"; break; // life pickup
-                    case 'W': ctx.fillStyle = "#cba6f7"; break; // goal
-                    default: ctx.fillStyle = "#1b2535"; break; // floor
-                }
-                ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                let glyph = ' ';
+                let color = "#aab1c2"; // bright black / gray
+                if (ch === '#') { glyph = '#'; color = "#ffffff"; }
+                else if (ch === '.') { glyph = '.'; color = "#6b7280"; }
+                else if (ch === 'X') { glyph = 'X'; color = "#facc15"; }
+                else if (ch === 'W') { glyph = 'W'; color = "#d946ef"; }
+                else if (ch === '@') { glyph = '.'; color = "#6b7280"; }
+                ctx.fillStyle = color;
+                ctx.fillText(glyph, px + 1, py + 1);
             }
         }
 
-        // Draw enemies in this map
+        // Draw enemies in this map (glyph 'E', bright red)
         for (const e of enemies) {
             if (e.wx !== wx || e.wy !== wy) continue;
             const px = e.x * TILE_SIZE;
             const py = e.y * TILE_SIZE;
-            ctx.fillStyle = "#f38ba8"; // red-ish
-            ctx.fillRect(px + 2, py + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+            ctx.fillStyle = "#ef4444";
+            ctx.fillText('E', px + 1, py + 1);
         }
 
-        // Draw bullets in this map
+        // Draw bullets in this map (glyph '*', bright green)
         for (const b of bullets) {
             if (!b.active || b.wx !== wx || b.wy !== wy) continue;
-            const px = b.x * TILE_SIZE + TILE_SIZE/2 - 2;
-            const py = b.y * TILE_SIZE + TILE_SIZE/2 - 2;
-            ctx.fillStyle = "#89dceb"; // cyan-ish
-            ctx.fillRect(px, py, 4, 4);
+            const px = b.x * TILE_SIZE;
+            const py = b.y * TILE_SIZE;
+            ctx.fillStyle = "#22c55e";
+            ctx.fillText('*', px + 1, py + 1);
         }
 
-        // Draw players; you in cyan, others by color index
+        // Draw players as '@'; you in bright cyan, others by color index
         for (let i = 0; i < players.length; i++) {
             const p = players[i];
             if (!p || !p.active || p.wx !== wx || p.wy !== wy) continue;
             const px = p.x * TILE_SIZE;
             const py = p.y * TILE_SIZE;
             const isYou = (i === youId);
-            ctx.fillStyle = isYou ? "#89b4fa" : colorFromIndex(p.color);
-            ctx.fillRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+            // Flicker during invincibility similar to console (~toggle every few ticks)
+            const flicker = p.invincibleTicks > 0 && ((p.invincibleTicks >> 3) & 1);
+            if (flicker && isYou) continue;
+            ctx.fillStyle = isYou ? "#22d3ee" : colorFromIndex(p.color);
+            ctx.fillText('@', px + 1, py + 1);
         }
 
-        // Simple HUD
-        const hudY = MAP_HEIGHT * TILE_SIZE + 8;
+        // HUD: HP and Ping
+        const hudY = MAP_HEIGHT * TILE_SIZE + 4;
         ctx.fillStyle = "#dbe2f1";
-        ctx.fillText("HP/Score: " + (me ? `${me.hp} / ${me.score}` : "-"), 8, hudY);
-        ctx.fillText("Map: (" + wx + "," + wy + ")", 180, hudY);
-        ctx.fillText("Players: " + players.filter(p=>p&&p.active).length, 280, hudY);
+        const hpText = "HP: " + (me ? me.hp : "-");
+        const pingText = "Ping: " + (pingMs >= 0 ? (pingMs + " ms") : "-- ms");
+        ctx.fillText(hpText + "   " + pingText, 8, hudY);
+
+        // Titles and layout
+        const titleY = hudY + TILE_SIZE;
+        const leftX = 8;
+        const charW = ctx.measureText('M').width;
+        const cols = 4, rows = 4, cellWChars = 7, gapChars = 4;
+        const scoreboardWidthPx = cols * cellWChars * charW + gapChars * charW;
+        const rightX = leftX + scoreboardWidthPx;
+        ctx.fillText("Scoreboard", leftX, titleY);
+        ctx.fillText("Minimap", rightX, titleY);
+
+        // Scoreboard (4x4)
+        for (let r = 0; r < rows; r++) {
+            const y = titleY + TILE_SIZE + r * (TILE_SIZE - 2);
+            for (let c = 0; c < cols; c++) {
+                const idx = r * cols + c;
+                const x = leftX + c * (cellWChars * charW);
+                const p = players[idx];
+                if (p && p.active) {
+                    ctx.fillStyle = colorFromIndex(p.color);
+                    ctx.fillText('@', x, y);
+                    ctx.fillStyle = "#dbe2f1";
+                    const scoreStr = String(p.score ?? 0).padStart(4, ' ');
+                    ctx.fillText(scoreStr, x + charW * 2, y);
+                } else {
+                    ctx.fillStyle = "#5b6478";
+                    ctx.fillText(' ', x, y);
+                }
+            }
+        }
+
+        // Minimap (9x9)
+        const miniTopY = titleY + TILE_SIZE;
+        for (let my = 0; my < WORLD_H; my++) {
+            const y = miniTopY + my * (TILE_SIZE - 2);
+            for (let mx = 0; mx < WORLD_W; mx++) {
+                let ch = '.';
+                let col = "#8b93a6";
+                const isCur = (mx === wx && my === wy);
+                if (isCur) { ch = 'X'; col = "#ffffff"; }
+                let playerColor = null;
+                for (let i = 0; i < players.length; i++) {
+                    const p = players[i];
+                    if (!p || !p.active) continue;
+                    if (p.wx === mx && p.wy === my) { playerColor = colorFromIndex(p.color); break; }
+                }
+                if (!isCur && playerColor) { ch = '@'; col = playerColor; }
+                ctx.fillStyle = col;
+                const x = rightX + (mx * charW);
+                ctx.fillText(ch, x, y);
+            }
+        }
     }
 
     function colorFromIndex(idx) {
-        const palette = ["#89b4fa","#f38ba8","#a6e3a1","#f9e2af","#cba6f7","#94e2d5","#fab387","#b4befe",
-                         "#f5c2e7","#74c7ec","#eba0ac","#a6adc8","#f2cdcd","#cdd6f4","#89dceb","#f8bd96"]; // up to 16
+        // Approximate terminal bright ANSI palette for other players
+        const palette = ["#22d3ee","#ef4444","#22c55e","#facc15","#d946ef","#14b8a6","#f97316","#60a5fa",
+                         "#f472b6","#38bdf8","#fb7185","#94a3b8","#fca5a5","#e5e7eb","#86efac","#f8b4a0"]; // up to 16
         return palette[idx % palette.length];
     }
 
     // Main loop
     function loop(ts) {
-        tickNetwork(ts);
-        // Reset frame-accumulated transient arrays; server sends fresh each tick
-        bullets.length = 0;
-        enemies.length = 0;
+        // Redraw continuously for HUD/minimap while all simulation is server-authoritative
         draw();
         requestAnimationFrame(loop);
     }
@@ -337,7 +430,8 @@
 
     // Start
     requestAnimationFrame(loop);
-    // Auto-connect on load
+    // Auto-connect on load to default
+    serverUrlInput.value = DEFAULT_ENDPOINT;
     connect();
 })();
 </script>

@@ -80,6 +80,7 @@ static Client clients[MAX_CLIENTS];
 static unsigned long long g_nextConnId = 1ULL;
 static SrvBullet bullets[MAX_REMOTE_BULLETS];
 static SrvEnemy enemies[WORLD_H][WORLD_W][MAX_ENEMIES];
+static int g_tick_counter = 0; // global server tick counter (~20 ticks/sec)
 
 // Simple WS connection limits
 #define MAX_WS_PER_IP 2
@@ -480,6 +481,11 @@ found:
 
 static void broadcast_state(void) {
     char line[128]; char buf[8192]; int off = 0;
+    // Prepend a tick marker so clients can align updates
+    {
+        int n0 = snprintf(line, sizeof(line), "TICK %d\n", g_tick_counter);
+        if (n0 > 0 && off + n0 < (int)sizeof(buf)) { memcpy(buf + off, line, n0); off += n0; }
+    }
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         int active = clients[i].connected ? 1 : 0;
         int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks, clients[i].score);
@@ -991,9 +997,8 @@ parsed_continue:
             }
         }
 
-        static int tickCounter = 0;
-        if ((tickCounter % 2) == 0) step_bullets(); // ~10 steps/sec
-        if ((tickCounter % 3) == 0) step_enemies(); // ~6-7 steps/sec
+        if ((g_tick_counter % 2) == 0) step_bullets(); // ~10 steps/sec
+        if ((g_tick_counter % 3) == 0) step_enemies(); // ~6-7 steps/sec
         apply_enemy_contact_damage();
         // handle pickups like 'X'
         for (int ci = 0; ci < MAX_CLIENTS; ++ci) {
@@ -1026,7 +1031,7 @@ parsed_continue:
             }
         }
         broadcast_state();
-        tickCounter++;
+        g_tick_counter++;
     }
 
     return 0;
