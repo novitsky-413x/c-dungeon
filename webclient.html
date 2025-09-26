@@ -77,8 +77,8 @@
 
     function setStatus(text) { statusEl.textContent = text; }
 
-    // Single fixed endpoint (bridge default: ws on port 3000)
-    const FIXED_ENDPOINT = "ws://runcode.at:3000/ws";
+    // Single fixed endpoint (native WS server on 5556)
+    const FIXED_ENDPOINT = "ws://runcode.at:5556/ws";
 
     let connectAbort = false;
     async function connect() {

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdint.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -48,6 +49,10 @@ typedef struct {
 typedef struct {
     int connected;
     sock_t sock;
+    int isWebSocket;
+    int wsHandshakeDone;
+    char wsBuf[8192];
+    int wsBufLen;
     int worldX, worldY;
     Vec2 pos;
     int color;
@@ -81,6 +86,132 @@ static int is_map_active(int wx, int wy) {
         if (clients[i].worldX == wx && clients[i].worldY == wy) return 1;
     }
     return 0;
+}
+
+// --- Minimal Base64 encoding ---
+static const char b64tab[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static int base64_encode(const uint8_t *in, int inlen, char *out, int outcap) {
+    int i = 0, o = 0;
+    while (i < inlen && o + 4 < outcap) {
+        int rem = inlen - i;
+        uint32_t v = (uint32_t)in[i++] << 16;
+        if (rem > 1) v |= (uint32_t)in[i++] << 8;
+        if (rem > 2) v |= (uint32_t)in[i++];
+        out[o++] = b64tab[(v >> 18) & 63];
+        out[o++] = b64tab[(v >> 12) & 63];
+        out[o++] = (rem > 1) ? b64tab[(v >> 6) & 63] : '=';
+        out[o++] = (rem > 2) ? b64tab[v & 63] : '=';
+        if (rem <= 2) break;
+    }
+    if (o < outcap) out[o] = '\0';
+    return o;
+}
+
+// --- Minimal SHA1 implementation ---
+static uint32_t rol32(uint32_t v, int r) { return (v << r) | (v >> (32 - r)); }
+static void sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
+    uint32_t h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
+    size_t ml = len * 8;
+    size_t total = len + 1 + 8; // 0x80 + 64-bit length
+    size_t pad = (64 - (total % 64)) % 64;
+    size_t nblocks = (len + 1 + pad + 8) / 64;
+    for (size_t b = 0; b < nblocks; ++b) {
+        uint8_t chunk[64];
+        size_t off = b * 64;
+        for (int i = 0; i < 64; ++i) {
+            size_t idx = off + i;
+            if (idx < len) chunk[i] = data[idx];
+            else if (idx == len) chunk[i] = 0x80;
+            else if (idx < len + 1 + pad) chunk[i] = 0x00;
+            else {
+                size_t shift = (len + 1 + pad + 8 - 1) - idx;
+                (void)shift;
+                break;
+            }
+        }
+        // append 64-bit big-endian length at end of last block
+        if (off + 64 >= len + 1 + pad + 8) {
+            uint8_t *p = chunk + 64 - 8;
+            p[0] = (uint8_t)((ml >> 56) & 0xFF);
+            p[1] = (uint8_t)((ml >> 48) & 0xFF);
+            p[2] = (uint8_t)((ml >> 40) & 0xFF);
+            p[3] = (uint8_t)((ml >> 32) & 0xFF);
+            p[4] = (uint8_t)((ml >> 24) & 0xFF);
+            p[5] = (uint8_t)((ml >> 16) & 0xFF);
+            p[6] = (uint8_t)((ml >> 8) & 0xFF);
+            p[7] = (uint8_t)((ml >> 0) & 0xFF);
+        }
+        uint32_t w[80];
+        for (int i = 0; i < 16; ++i) {
+            w[i] = ((uint32_t)chunk[i*4+0] << 24) | ((uint32_t)chunk[i*4+1] << 16) | ((uint32_t)chunk[i*4+2] << 8) | ((uint32_t)chunk[i*4+3]);
+        }
+        for (int i = 16; i < 80; ++i) w[i] = rol32(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
+        uint32_t a = h0, b0 = h1, c = h2, d = h3, e = h4;
+        for (int i = 0; i < 80; ++i) {
+            uint32_t f, k;
+            if (i < 20) { f = (b0 & c) | ((~b0) & d); k = 0x5A827999; }
+            else if (i < 40) { f = b0 ^ c ^ d; k = 0x6ED9EBA1; }
+            else if (i < 60) { f = (b0 & c) | (b0 & d) | (c & d); k = 0x8F1BBCDC; }
+            else { f = b0 ^ c ^ d; k = 0xCA62C1D6; }
+            uint32_t temp = rol32(a, 5) + f + e + k + w[i];
+            e = d; d = c; c = rol32(b0, 30); b0 = a; a = temp;
+        }
+        h0 += a; h1 += b0; h2 += c; h3 += d; h4 += e;
+    }
+    out[0]= (h0>>24)&0xFF; out[1]=(h0>>16)&0xFF; out[2]=(h0>>8)&0xFF; out[3]=h0&0xFF;
+    out[4]= (h1>>24)&0xFF; out[5]=(h1>>16)&0xFF; out[6]=(h1>>8)&0xFF; out[7]=h1&0xFF;
+    out[8]= (h2>>24)&0xFF; out[9]=(h2>>16)&0xFF; out[10]=(h2>>8)&0xFF; out[11]=h2&0xFF;
+    out[12]=(h3>>24)&0xFF; out[13]=(h3>>16)&0xFF; out[14]=(h3>>8)&0xFF; out[15]=h3&0xFF;
+    out[16]=(h4>>24)&0xFF; out[17]=(h4>>16)&0xFF; out[18]=(h4>>8)&0xFF; out[19]=h4&0xFF;
+}
+
+static int ws_send_text_frame(sock_t s, const char *data, int len) {
+    // build a server-to-client unmasked text frame
+    uint8_t hdr[10]; int hlen = 0;
+    hdr[0] = 0x81; // FIN + text
+    if (len < 126) { hdr[1] = (uint8_t)len; hlen = 2; }
+    else if (len <= 0xFFFF) { hdr[1] = 126; hdr[2] = (len >> 8) & 0xFF; hdr[3] = len & 0xFF; hlen = 4; }
+    else { hdr[1] = 127; // 64-bit length
+           hdr[2]=hdr[3]=hdr[4]=hdr[5]=0; hdr[6]=(len>>24)&0xFF; hdr[7]=(len>>16)&0xFF; hdr[8]=(len>>8)&0xFF; hdr[9]=len&0xFF; hlen = 10; }
+    int n1 = (int)send(s, (const char*)hdr, hlen, 0);
+    if (n1 < 0) return n1;
+    return (int)send(s, data, len, 0);
+}
+
+static int ws_handshake(Client *c) {
+    // Expect HTTP GET with Sec-WebSocket-Key
+    c->wsBuf[c->wsBufLen] = '\0';
+    const char *end = strstr(c->wsBuf, "\r\n\r\n");
+    if (!end) return 0; // need more
+    const char *keyh = strcasestr(c->wsBuf, "Sec-WebSocket-Key:");
+    if (!keyh) return -1;
+    keyh += strlen("Sec-WebSocket-Key:");
+    while (*keyh==' ' || *keyh=='\t') keyh++;
+    char key[128]={0}; int ki=0;
+    while (*keyh && *keyh!='\r' && *keyh!='\n' && ki< (int)sizeof(key)-1) key[ki++]=*keyh++;
+    const char *GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    char concat[256]; snprintf(concat, sizeof(concat), "%s%s", key, GUID);
+    uint8_t digest[20]; sha1((const uint8_t*)concat, strlen(concat), digest);
+    char accept[64]; base64_encode(digest, 20, accept, sizeof(accept));
+    char resp[256];
+    int rn = snprintf(resp, sizeof(resp),
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
+    send(c->sock, resp, rn, 0);
+    c->wsHandshakeDone = 1;
+    c->wsBufLen = 0;
+    return 1;
+}
+
+static void send_text_to_client(int idx, const char *data, int len) {
+    if (!clients[idx].connected) return;
+    if (clients[idx].isWebSocket && clients[idx].wsHandshakeDone) {
+        ws_send_text_frame(clients[idx].sock, data, len);
+    } else {
+        send(clients[idx].sock, data, len, 0);
+    }
 }
 
 static void send_full_map_to(int clientIdx) {
@@ -265,11 +396,8 @@ static void broadcast_state(void) {
     }
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         if (!clients[i].connected) continue;
-#ifdef _WIN32
-        send(clients[i].sock, buf, off, 0);
-#else
-        send(clients[i].sock, buf, off, 0);
-#endif
+        if (clients[i].isWebSocket && clients[i].wsHandshakeDone) ws_send_text_frame(clients[i].sock, buf, off);
+        else send(clients[i].sock, buf, off, 0);
     }
 }
 
@@ -278,7 +406,8 @@ static void broadcast_tile(int wx, int wy, int x, int y, char ch) {
     int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", wx, wy, x, y, ch);
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         if (!clients[i].connected) continue;
-        send(clients[i].sock, line, n, 0);
+        if (clients[i].isWebSocket && clients[i].wsHandshakeDone) ws_send_text_frame(clients[i].sock, line, n);
+        else send(clients[i].sock, line, n, 0);
     }
 }
 
@@ -417,6 +546,7 @@ int main(int argc, char **argv) {
     WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
 #endif
     const char *port = (argc > 1) ? argv[1] : "5555";
+    const char *wsport = (argc > 2) ? argv[2] : "5556"; // secondary port for WebSocket
 
     for (int y = 0; y < WORLD_H; ++y) for (int x = 0; x < WORLD_W; ++x) load_map_file(x, y);
     memset(clients, 0, sizeof(clients));
@@ -431,12 +561,20 @@ int main(int argc, char **argv) {
     if (listen(lsock, 16) != 0) { fprintf(stderr, "listen failed\n"); return 1; }
     freeaddrinfo(res);
 
-    printf("[srv] Listening on port %s\n", port);
+    // Second listening socket for WebSocket clients
+    struct addrinfo *res2 = NULL; if (getaddrinfo(NULL, wsport, &hints, &res2) != 0) { fprintf(stderr, "getaddrinfo failed (ws)\n"); return 1; }
+    sock_t wslsock = (sock_t)socket(res2->ai_family, res2->ai_socktype, res2->ai_protocol);
+    setsockopt(wslsock, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
+    if (bind(wslsock, res2->ai_addr, (int)res2->ai_addrlen) != 0) { fprintf(stderr, "bind failed (ws)\n"); return 1; }
+    if (listen(wslsock, 16) != 0) { fprintf(stderr, "listen failed (ws)\n"); return 1; }
+    freeaddrinfo(res2);
+
+    printf("[srv] Listening on port %s (TCP) and %s (WebSocket)\n", port, wsport);
     fflush(stdout);
 
     fd_set readfds;
     while (1) {
-        FD_ZERO(&readfds); FD_SET(lsock, &readfds); sock_t maxfd = lsock;
+        FD_ZERO(&readfds); FD_SET(lsock, &readfds); FD_SET(wslsock, &readfds); sock_t maxfd = lsock; if (wslsock > maxfd) maxfd = wslsock;
         for (int i = 0; i < MAX_CLIENTS; ++i) { if (clients[i].connected) { FD_SET(clients[i].sock, &readfds); if (clients[i].sock > maxfd) maxfd = clients[i].sock; } }
         struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 50000; // 50ms tick
         select((int)(maxfd+1), &readfds, NULL, NULL, &tv);
@@ -450,7 +588,7 @@ int main(int argc, char **argv) {
                 setsockopt(cs, SOL_SOCKET, SO_KEEPALIVE, (const char*)&one, sizeof(one));
                 int idx = -1; for (int i = 0; i < MAX_CLIENTS; ++i) if (!clients[i].connected) { idx = i; break; }
                 if (idx >= 0) {
-                    clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx;
+                    clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx; clients[idx].isWebSocket = 0; clients[idx].wsHandshakeDone = 0; clients[idx].wsBufLen = 0;
                     place_near_spawn(&clients[idx]);
                     clients[idx].facing = DIR_RIGHT;
                     clients[idx].hp = 3;
@@ -476,7 +614,7 @@ int main(int argc, char **argv) {
                            clients[idx].worldX, clients[idx].worldY, clients[idx].pos.x, clients[idx].pos.y);
                     fflush(stdout);
                     char you[32]; int n = snprintf(you, sizeof(you), "YOU %d\n", idx);
-                    send(clients[idx].sock, you, n, 0);
+                    send_text_to_client(idx, you, n);
                     // send full map snapshot to ensure client renders current walls/tiles
                     send_full_map_to(idx);
                 } else {
@@ -496,8 +634,30 @@ int main(int argc, char **argv) {
             }
         }
 
-        // Read inputs
-        char buf[256];
+        // Accept WebSocket clients
+        if (FD_ISSET(wslsock, &readfds)) {
+            struct sockaddr_storage ss; socklen_t slen = sizeof(ss);
+            sock_t cs = accept(wslsock, (struct sockaddr*)&ss, &slen);
+            if (cs >= 0) {
+                int one = 1; setsockopt(cs, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one));
+                setsockopt(cs, SOL_SOCKET, SO_KEEPALIVE, (const char*)&one, sizeof(one));
+                int idx = -1; for (int i = 0; i < MAX_CLIENTS; ++i) if (!clients[i].connected) { idx = i; break; }
+                if (idx >= 0) {
+                    clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx; clients[idx].isWebSocket = 1; clients[idx].wsHandshakeDone = 0; clients[idx].wsBufLen = 0;
+                    // Defer YOU/snapshot until handshake completes
+                } else {
+                    const char *full = "FULL\n"; send(cs, full, (int)strlen(full), 0);
+#ifdef _WIN32
+                    closesocket(cs);
+#else
+                    close(cs);
+#endif
+                }
+            }
+        }
+
+        // Read inputs / WS handshake/frames
+        char buf[2048];
         for (int i = 0; i < MAX_CLIENTS; ++i) {
             if (!clients[i].connected) continue;
             if (!FD_ISSET(clients[i].sock, &readfds)) continue; // only read if socket is ready
@@ -520,6 +680,48 @@ int main(int argc, char **argv) {
                 continue;
             }
             buf[n] = '\0';
+            // If WS client and not handshaken, accumulate and do handshake
+            if (clients[i].isWebSocket && !clients[i].wsHandshakeDone) {
+                if (clients[i].wsBufLen + n > (int)sizeof(clients[i].wsBuf)-1) clients[i].wsBufLen = 0; // reset on overflow
+                memcpy(clients[i].wsBuf + clients[i].wsBufLen, buf, n);
+                clients[i].wsBufLen += n;
+                int hs = ws_handshake(&clients[i]);
+                if (hs < 0) { // bad handshake
+                    clients[i].connected = 0;
+#ifdef _WIN32
+                    closesocket(clients[i].sock);
+#else
+                    close(clients[i].sock);
+#endif
+                    clients[i].sock = 0;
+                } else if (hs > 0) {
+                    // complete: now send YOU and full map
+                    place_near_spawn(&clients[i]);
+                    clients[i].facing = DIR_RIGHT; clients[i].hp = 3; clients[i].invincibleTicks=0; clients[i].superTicks=0; clients[i].shootCooldown=0; clients[i].score=0; clients[i].lastActive=time(NULL);
+                    clients[i].tokens=10; clients[i].maxTokens=20; clients[i].refillTicks=2; clients[i].refillAmount=1; clients[i].tickSinceRefill=0;
+                    char you[32]; int yn = snprintf(you, sizeof(you), "YOU %d\n", i);
+                    send_text_to_client(i, you, yn);
+                    send_full_map_to(i);
+                }
+                continue;
+            }
+
+            // If WS framed, deframe text payload into buf
+            if (clients[i].isWebSocket) {
+                // Simple, single-frame text parser (FIN + TEXT, masked)
+                const unsigned char *d = (const unsigned char*)buf;
+                if (n < 2) continue;
+                int masked = (d[1] & 0x80) != 0; size_t len = (size_t)(d[1] & 0x7F); size_t off = 2;
+                if (len == 126) { if (n < 4) continue; len = (d[2]<<8)|d[3]; off = 4; }
+                else if (len == 127) { if (n < 10) continue; len = (size_t)d[9]; off = 10; }
+                unsigned char mask[4] = {0,0,0,0};
+                if (masked) { if ((int)off + 4 > n) continue; memcpy(mask, d+off, 4); off += 4; }
+                if ((int)(off + len) > n) continue;
+                for (size_t k = 0; k < len; ++k) d[(int)off + (int)k] = d[(int)off + (int)k] ^ mask[k & 3];
+                d = d + off; n = (int)len; ((char*)d)[n] = '\0';
+                memcpy(buf, d, n+1);
+            }
+
             // parse simple commands: INPUT dx dy shoot | PING t
             char *p = buf;
             while (*p) {
@@ -538,7 +740,7 @@ int main(int argc, char **argv) {
                 } else if (strncmp(p, "PING ", 5) == 0) {
                     // Reflect back the timestamp for RTT measurement
                     char line[64]; int rn = snprintf(line, sizeof(line), "PONG %s\n", p + 5);
-                    send(clients[i].sock, line, rn, 0);
+                    send_text_to_client(i, line, rn);
                 } else if (sscanf(p, "INPUT %d %d %d", &dx, &dy, &shoot) == 3) {
                     clients[i].lastActive = time(NULL);
                     // Rate limit: consume one token per INPUT; if none, drop and optionally warn

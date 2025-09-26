@@ -117,12 +117,13 @@ Choose “Singleplayer” at the menu.
   ```
 - Linux/macOS:
   ```bash
-  ./server 5555
+  ./server 5555 5556   # second arg enables native WebSocket on 5556 (ws)
   ```
 
 The server searches for `maps/` relative to its working directory (`./maps/`, then `../maps/`, then `../../maps/`). Running from the repo root is simplest.
 
-2) Start the client and choose “Multiplayer”, then enter the server `host[:port]` (default port 5555). Example: `127.0.0.1:5555`.
+2) Web client: open `webclient.html` (connects to `ws://runcode.at:5556/ws`).
+   Native client: choose “Multiplayer”, enter `host[:port]` (default 5555), e.g. `127.0.0.1:5555`.
 
 While connecting and awaiting the first authoritative snapshot, the client displays an animated loading screen.
 
