@@ -81,6 +81,56 @@ static unsigned long long g_nextConnId = 1ULL;
 static SrvBullet bullets[MAX_REMOTE_BULLETS];
 static SrvEnemy enemies[WORLD_H][WORLD_W][MAX_ENEMIES];
 
+// Simple WS connection limits
+#define MAX_WS_PER_IP 2
+#define WS_CONN_RATE_SLOTS 64
+#define WS_CONN_WINDOW_SECONDS 10
+#define WS_CONN_MAX_PER_WINDOW 3
+
+typedef struct {
+    char ip[64];
+    time_t windowStart;
+    int attemptsInWindow;
+} WsIpRate;
+static WsIpRate g_wsIpRates[WS_CONN_RATE_SLOTS];
+
+static int ws_count_active_for_ip(const char *ip) {
+    if (!ip || !*ip) return 0;
+    int cnt = 0;
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (!clients[i].connected) continue;
+        if (!clients[i].isWebSocket) continue;
+        if (strcmp(clients[i].addr, ip) == 0) cnt++;
+    }
+    return cnt;
+}
+
+static int ws_rate_allow(const char *ip) {
+    if (!ip) return 0;
+    time_t now = time(NULL);
+    int freeIdx = -1;
+    for (int i = 0; i < WS_CONN_RATE_SLOTS; ++i) {
+        if (g_wsIpRates[i].ip[0] == '\0') { if (freeIdx < 0) freeIdx = i; continue; }
+        if (strcmp(g_wsIpRates[i].ip, ip) == 0) {
+            if (now - g_wsIpRates[i].windowStart >= WS_CONN_WINDOW_SECONDS) {
+                g_wsIpRates[i].windowStart = now; g_wsIpRates[i].attemptsInWindow = 0;
+            }
+            if (g_wsIpRates[i].attemptsInWindow >= WS_CONN_MAX_PER_WINDOW) return 0;
+            g_wsIpRates[i].attemptsInWindow++;
+            return 1;
+        }
+    }
+    if (freeIdx >= 0) {
+        strncpy(g_wsIpRates[freeIdx].ip, ip, sizeof(g_wsIpRates[freeIdx].ip)-1);
+        g_wsIpRates[freeIdx].ip[sizeof(g_wsIpRates[freeIdx].ip)-1] = '\0';
+        g_wsIpRates[freeIdx].windowStart = now;
+        g_wsIpRates[freeIdx].attemptsInWindow = 1;
+        return 1;
+    }
+    // No slot; allow by default
+    return 1;
+}
+
 static int is_map_active(int wx, int wy) {
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         if (!clients[i].connected) continue;
@@ -209,14 +259,7 @@ static int ws_handshake(Client *c) {
     const char *end = strstr(c->wsBuf, "\r\n\r\n");
     if (!end) end = strstr(c->wsBuf, "\n\n"); // be tolerant
     if (!end) return 0; // need more
-    // Debug: print the received request headers for troubleshooting
-    int hdrLen = (int)(end - c->wsBuf);
-    if (hdrLen > 0 && hdrLen < (int)sizeof(c->wsBuf)) {
-        char snap[512]; int sl = hdrLen < (int)sizeof(snap)-1 ? hdrLen : (int)sizeof(snap)-1;
-        memcpy(snap, c->wsBuf, sl); snap[sl] = '\0';
-        printf("[ws] Handshake request (first %d bytes):\n%.*s\n", sl, sl, snap);
-        fflush(stdout);
-    }
+    // (debug logs removed)
     // Robust header parse: find Sec-WebSocket-Key case-insensitively, ignoring whitespace
     char key[128] = {0};
     const char *p = c->wsBuf;
@@ -254,7 +297,7 @@ static int ws_handshake(Client *c) {
         }
         p = nl + 1;
     }
-    if (key[0] == '\0') { printf("[ws] Missing Sec-WebSocket-Key, closing.\n"); fflush(stdout); return -1; }
+    if (key[0] == '\0') { return -1; }
     const char *GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     char concat[256]; snprintf(concat, sizeof(concat), "%s%s", key, GUID);
     uint8_t digest[20]; sha1((const uint8_t*)concat, strlen(concat), digest);
@@ -265,8 +308,7 @@ static int ws_handshake(Client *c) {
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-    if (send(c->sock, resp, rn, 0) < 0) { printf("[ws] Send 101 failed.\n"); fflush(stdout); return -1; }
-    printf("[ws] Sent 101 Switching Protocols.\n"); fflush(stdout);
+    if (send(c->sock, resp, rn, 0) < 0) { return -1; }
     c->wsHandshakeDone = 1;
     c->wsBufLen = 0;
     return 1;
@@ -712,6 +754,20 @@ int main(int argc, char **argv) {
                 setsockopt(cs, SOL_SOCKET, SO_KEEPALIVE, (const char*)&one, sizeof(one));
                 int idx = -1; for (int i = 0; i < MAX_CLIENTS; ++i) if (!clients[i].connected) { idx = i; break; }
                 if (idx >= 0) {
+                    // Determine client IP (for limits)
+                    char host[64] = {0}, serv[16] = {0};
+                    if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+                        strncpy(host, "?", sizeof(host)-1); strncpy(serv, "?", sizeof(serv)-1);
+                    }
+                    // Per-IP concurrent limit
+                    if (ws_count_active_for_ip(host) >= MAX_WS_PER_IP || !ws_rate_allow(host)) {
+#ifdef _WIN32
+                        closesocket(cs);
+#else
+                        close(cs);
+#endif
+                        continue;
+                    }
                     clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx; clients[idx].isWebSocket = 1; clients[idx].wsHandshakeDone = 0; clients[idx].wsBufLen = 0;
                     // Read HTTP headers synchronously (short timeout) and complete WS handshake
                     {
@@ -750,13 +806,9 @@ int main(int argc, char **argv) {
                             clients[idx].score = 0;
                             clients[idx].lastActive = time(NULL);
                             clients[idx].tokens = 10; clients[idx].maxTokens = 20; clients[idx].refillTicks = 2; clients[idx].refillAmount = 1; clients[idx].tickSinceRefill = 0;
-                            clients[idx].connId = g_nextConnId++;
-                            char host[64] = {0}, serv[16] = {0};
-                            if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
-                                strncpy(host, "?", sizeof(host)-1); strncpy(serv, "?", sizeof(serv)-1);
-                            }
                             strncpy(clients[idx].addr, host, sizeof(clients[idx].addr)-1);
                             strncpy(clients[idx].port, serv, sizeof(clients[idx].port)-1);
+                            clients[idx].connId = g_nextConnId++;
                             place_near_spawn(&clients[idx]);
                             char you[32]; int yn = snprintf(you, sizeof(you), "YOU %d\n", idx);
                             send_text_to_client(idx, you, yn);
