@@ -92,17 +92,32 @@ static int is_map_active(int wx, int wy) {
 // --- Minimal Base64 encoding ---
 static const char b64tab[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 static int base64_encode(const uint8_t *in, int inlen, char *out, int outcap) {
-    int i = 0, o = 0;
-    while (i < inlen && o + 4 < outcap) {
-        int rem = inlen - i;
-        uint32_t v = (uint32_t)in[i++] << 16;
-        if (rem > 1) v |= (uint32_t)in[i++] << 8;
-        if (rem > 2) v |= (uint32_t)in[i++];
+    int o = 0;
+    int i = 0;
+    while (i + 2 < inlen) {
+        if (o + 4 > outcap) return o;
+        uint32_t v = ((uint32_t)in[i] << 16) | ((uint32_t)in[i+1] << 8) | in[i+2];
         out[o++] = b64tab[(v >> 18) & 63];
         out[o++] = b64tab[(v >> 12) & 63];
-        out[o++] = (rem > 1) ? b64tab[(v >> 6) & 63] : '=';
-        out[o++] = (rem > 2) ? b64tab[v & 63] : '=';
-        if (rem <= 2) break;
+        out[o++] = b64tab[(v >> 6) & 63];
+        out[o++] = b64tab[v & 63];
+        i += 3;
+    }
+    int rem = inlen - i;
+    if (rem == 1) {
+        if (o + 4 > outcap) return o;
+        uint32_t v = ((uint32_t)in[i]) << 16;
+        out[o++] = b64tab[(v >> 18) & 63];
+        out[o++] = b64tab[(v >> 12) & 63];
+        out[o++] = '=';
+        out[o++] = '=';
+    } else if (rem == 2) {
+        if (o + 4 > outcap) return o;
+        uint32_t v = ((uint32_t)in[i] << 16) | ((uint32_t)in[i+1] << 8);
+        out[o++] = b64tab[(v >> 18) & 63];
+        out[o++] = b64tab[(v >> 12) & 63];
+        out[o++] = b64tab[(v >> 6) & 63];
+        out[o++] = '=';
     }
     if (o < outcap) out[o] = '\0';
     return o;
