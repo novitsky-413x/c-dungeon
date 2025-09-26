@@ -345,14 +345,21 @@ static void send_map_to(int clientIdx, int wx, int wy) {
     if (clientIdx < 0 || clientIdx >= MAX_CLIENTS) return;
     if (!clients[clientIdx].connected) return;
     if (wx < 0 || wx >= WORLD_W || wy < 0 || wy >= WORLD_H) return;
-    char line[64];
+    char buf[32768]; int off = 0; char line[64];
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
             char ch = world[wy][wx].tiles[y][x];
             int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", wx, wy, x, y, ch);
-            send_text_to_client(clientIdx, line, n);
+            if (n <= 0) continue;
+            if (off + n >= (int)sizeof(buf)) {
+                send_text_to_client(clientIdx, buf, off);
+                off = 0;
+            }
+            memcpy(buf + off, line, n);
+            off += n;
         }
     }
+    if (off > 0) send_text_to_client(clientIdx, buf, off);
 }
 
 static FILE *try_open_map(const char *prefix, int mx, int my) {
@@ -1011,6 +1018,21 @@ int main(int argc, char **argv) {
                     }
                     // If world tile changed, send the new map snapshot to this client
                     if (clients[i].worldX != oldWX || clients[i].worldY != oldWY) {
+                        // send state first so client can show entities immediately
+                        char line[128]; char buf[4096]; int off = 0;
+                        int n0 = snprintf(line, sizeof(line), "TICK %d\n", g_tick_counter);
+                        if (n0 > 0 && off + n0 < (int)sizeof(buf)) { memcpy(buf + off, line, n0); off += n0; }
+                        for (int pj = 0; pj < MAX_CLIENTS; ++pj) {
+                            int active = clients[pj].connected ? 1 : 0;
+                            int pn = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d %d\n", pj, clients[pj].worldX, clients[pj].worldY, clients[pj].pos.x, clients[pj].pos.y, clients[pj].color, active, clients[pj].hp, clients[pj].invincibleTicks, clients[pj].superTicks, clients[pj].score);
+                            if (off + pn < (int)sizeof(buf)) { memcpy(buf + off, line, pn); off += pn; }
+                        }
+                        for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
+                            if (!bullets[b].active) continue;
+                            int bn = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
+                            if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
+                        }
+                        send_text_to_client(i, buf, off);
                         send_map_to(i, clients[i].worldX, clients[i].worldY);
                     }
                     if (shoot) {

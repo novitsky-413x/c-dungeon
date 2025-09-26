@@ -64,9 +64,10 @@
     let recvBuf = "";
     let pingTimer = null;
     let inputTimer = null;
-    // Track whether initial map for our world tile is fully received
+    // Track whether the current map (world tile) is fully received
     let initialMapLoaded = false;
     let loadingAnimTick = 0;
+    let currentWorldX = -1, currentWorldY = -1;
     let joined = false; // becomes true after we receive our PLAYER line with active=1
 
     // World state
@@ -97,6 +98,7 @@
         recvBuf = "";
         youId = -1;
         joined = false;
+        currentWorldX = -1; currentWorldY = -1; initialMapLoaded = false; loadingAnimTick = 0;
         connectAbort = false;
 
         const target = (serverUrlInput.value && serverUrlInput.value.trim()) ? serverUrlInput.value.trim() : DEFAULT_ENDPOINT;
@@ -229,7 +231,13 @@
             const [id, wx, wy, x, y, color, active, hp, invTicks, superTicks, score] = parseInts(parts, 1);
             ensurePlayersSize(id);
             Object.assign(players[id], { wx, wy, x, y, color, active, hp, invincibleTicks: invTicks, superTicks, score });
-            if (id === youId && active) { joined = true; initialMapLoaded = false; loadingAnimTick = 0; }
+            if (id === youId && active) {
+                joined = true;
+                if (currentWorldX !== wx || currentWorldY !== wy) {
+                    currentWorldX = wx; currentWorldY = wy;
+                    initialMapLoaded = false; loadingAnimTick = 0;
+                }
+            }
             return;
         }
         if (tag === "BULLET") {
@@ -257,11 +265,9 @@
             const ch = chToken.length ? chToken[0] : '.';
             if (wy>=0 && wy<WORLD_H && wx>=0 && wx<WORLD_W && y>=0 && y<MAP_HEIGHT && x>=0 && x<MAP_WIDTH) {
                 worldTiles[wy][wx][y][x] = ch;
-                if (youId >= 0 && players[youId] && players[youId].active) {
-                    if (wx === players[youId].wx && wy === players[youId].wy) {
-                        // Mark loaded when we've seen the last tile of the map (39,17)
-                        if (x === MAP_WIDTH - 1 && y === MAP_HEIGHT - 1) initialMapLoaded = true;
-                    }
+                // Mark map loaded when last tile of the current world tile arrives
+                if (wx === currentWorldX && wy === currentWorldY) {
+                    if (x === MAP_WIDTH - 1 && y === MAP_HEIGHT - 1) initialMapLoaded = true;
                 }
             }
             return;
@@ -294,7 +300,6 @@
         }, 1000);
         inputTimer = setInterval(() => {
             if (!socket || socket.readyState !== 1) return;
-            if (!initialMapLoaded) return; // avoid spamming server before ready
             const { dx, dy, shoot } = computeInput();
             if (dx !== 0 || dy !== 0 || shoot !== 0) sendLine(`INPUT ${dx} ${dy} ${shoot}`);
         }, INPUT_INTERVAL_MS);
@@ -318,8 +323,28 @@
         // Use monospace glyph rendering to match console visuals
         ctx.font = `${TILE_SIZE - 2}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
         ctx.textBaseline = "top";
-        // If not yet loaded, draw animated loading screen covering map area
-        if (!initialMapLoaded) { drawLoading(); return; }
+        // If not yet loaded, draw animated loading overlay but keep entities visible underneath
+        if (!initialMapLoaded) {
+            // draw entities faintly to orient the player while map loads
+            ctx.globalAlpha = 0.35;
+            for (let y = 0; y < MAP_HEIGHT; y++) {
+                for (let x = 0; x < MAP_WIDTH; x++) {
+                    const ch = worldTiles[wy][wx][y][x];
+                    const px = x * TILE_SIZE; const py = y * TILE_SIZE;
+                    let glyph = (ch === '#') ? '#' : (ch === 'X') ? 'X' : (ch === 'W') ? 'W' : '.';
+                    let color = (ch === '#') ? "#ffffff" : (ch === 'X') ? "#facc15" : (ch === 'W') ? "#d946ef" : "#6b7280";
+                    ctx.fillStyle = color; ctx.fillText(glyph, px + 1, py + 1);
+                }
+            }
+            // entities overlay
+            for (const e of enemies) { if (e.wx===wx && e.wy===wy) { ctx.fillStyle = "#ef4444"; ctx.fillText('E', e.x*TILE_SIZE+1, e.y*TILE_SIZE+1); } }
+            for (const b of bullets) { if (b.active && b.wx===wx && b.wy===wy) { ctx.fillStyle = "#22c55e"; ctx.fillText('*', b.x*TILE_SIZE+1, b.y*TILE_SIZE+1); } }
+            for (let i=0;i<players.length;i++){ const p=players[i]; if(p&&p.active&&p.wx===wx&&p.wy===wy){ ctx.fillStyle=(i===youId)?"#22d3ee":colorFromIndex(p.color); ctx.fillText('@', p.x*TILE_SIZE+1, p.y*TILE_SIZE+1);} }
+            ctx.globalAlpha = 1.0;
+            // loading overlay on top
+            drawLoading();
+            return;
+        }
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const ch = worldTiles[wy][wx][y][x];
