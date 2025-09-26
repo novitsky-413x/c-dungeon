@@ -209,12 +209,44 @@ static int ws_handshake(Client *c) {
     const char *end = strstr(c->wsBuf, "\r\n\r\n");
     if (!end) end = strstr(c->wsBuf, "\n\n"); // be tolerant
     if (!end) return 0; // need more
-    const char *keyh = strcasestr_local(c->wsBuf, "Sec-WebSocket-Key:");
-    if (!keyh) return -1;
-    keyh += strlen("Sec-WebSocket-Key:");
-    while (*keyh==' ' || *keyh=='\t') keyh++;
-    char key[128]={0}; int ki=0;
-    while (*keyh && *keyh!='\r' && *keyh!='\n' && ki< (int)sizeof(key)-1) key[ki++]=*keyh++;
+    // Robust header parse: find Sec-WebSocket-Key case-insensitively, ignoring whitespace
+    char key[128] = {0};
+    const char *p = c->wsBuf;
+    while (p < end) {
+        const char *ln = p;
+        const char *nl = strstr(ln, "\n");
+        if (!nl || nl > end) nl = end;
+        // Trim CRLF
+        const char *lineEnd = nl;
+        if (lineEnd > ln && *(lineEnd-1) == '\r') lineEnd--;
+        // Find colon
+        const char *colon = NULL;
+        for (const char *q = ln; q < lineEnd; ++q) { if (*q == ':') { colon = q; break; } }
+        if (colon) {
+            // Header name
+            int nameMatch = 1;
+            const char *name = "sec-websocket-key";
+            const char *q = ln; int idx = 0;
+            while (q < colon && name[idx]) {
+                char a = tolower((unsigned char)*q);
+                char b = name[idx];
+                if (a != b) { nameMatch = 0; break; }
+                q++; idx++;
+            }
+            if (name[idx] != '\0') nameMatch = 0; // not full name
+            // ignore extra spaces in header name area
+            if (nameMatch) {
+                const char *val = colon + 1;
+                while (val < lineEnd && (*val==' '||*val=='\t')) val++;
+                int ki = 0;
+                while (val < lineEnd && ki < (int)sizeof(key)-1) key[ki++] = *val++;
+                key[ki] = '\0';
+                break;
+            }
+        }
+        p = nl + 1;
+    }
+    if (key[0] == '\0') return -1;
     const char *GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     char concat[256]; snprintf(concat, sizeof(concat), "%s%s", key, GUID);
     uint8_t digest[20]; sha1((const uint8_t*)concat, strlen(concat), digest);
