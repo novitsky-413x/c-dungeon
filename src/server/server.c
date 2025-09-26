@@ -207,6 +207,7 @@ static int ws_handshake(Client *c) {
     // Expect HTTP GET with Sec-WebSocket-Key
     c->wsBuf[c->wsBufLen] = '\0';
     const char *end = strstr(c->wsBuf, "\r\n\r\n");
+    if (!end) end = strstr(c->wsBuf, "\n\n"); // be tolerant
     if (!end) return 0; // need more
     const char *keyh = strcasestr_local(c->wsBuf, "Sec-WebSocket-Key:");
     if (!keyh) return -1;
@@ -224,7 +225,9 @@ static int ws_handshake(Client *c) {
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-    send(c->sock, resp, rn, 0);
+    if (send(c->sock, resp, rn, 0) < 0) {
+        return -1;
+    }
     c->wsHandshakeDone = 1;
     c->wsBufLen = 0;
     return 1;
