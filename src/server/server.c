@@ -713,7 +713,56 @@ int main(int argc, char **argv) {
                 int idx = -1; for (int i = 0; i < MAX_CLIENTS; ++i) if (!clients[i].connected) { idx = i; break; }
                 if (idx >= 0) {
                     clients[idx].connected = 1; clients[idx].sock = cs; clients[idx].color = idx; clients[idx].isWebSocket = 1; clients[idx].wsHandshakeDone = 0; clients[idx].wsBufLen = 0;
-                    // Defer YOU/snapshot until handshake completes
+                    // Read HTTP headers synchronously (short timeout) and complete WS handshake
+                    {
+                        // Set a short recv timeout so we don't block the loop too long
+                        struct timeval rtv; rtv.tv_sec = 0; rtv.tv_usec = 200000; // 200 ms
+                        setsockopt(cs, SOL_SOCKET, SO_RCVTIMEO, (const char*)&rtv, sizeof(rtv));
+                        int total = 0;
+                        while (total < (int)sizeof(clients[idx].wsBuf) - 1) {
+                            char tmp[1024]; int cap = (int)sizeof(tmp) - 1;
+                            int rn = (int)recv(cs, tmp, cap, 0);
+                            if (rn <= 0) break;
+                            int room = (int)sizeof(clients[idx].wsBuf) - 1 - total;
+                            if (rn > room) rn = room;
+                            memcpy(clients[idx].wsBuf + total, tmp, rn);
+                            total += rn; clients[idx].wsBuf[total] = '\0';
+                            if (strstr(clients[idx].wsBuf, "\r\n\r\n") || strstr(clients[idx].wsBuf, "\n\n")) break;
+                        }
+                        clients[idx].wsBufLen = total;
+                        int hs = ws_handshake(&clients[idx]);
+                        if (hs <= 0) {
+                            // Bad handshake; close
+                            clients[idx].connected = 0;
+#ifdef _WIN32
+                            closesocket(cs);
+#else
+                            close(cs);
+#endif
+                            clients[idx].sock = 0;
+                        } else {
+                            // Initialize player state and send YOU + full map
+                            clients[idx].facing = DIR_RIGHT;
+                            clients[idx].hp = 3;
+                            clients[idx].invincibleTicks = 0;
+                            clients[idx].superTicks = 0;
+                            clients[idx].shootCooldown = 0;
+                            clients[idx].score = 0;
+                            clients[idx].lastActive = time(NULL);
+                            clients[idx].tokens = 10; clients[idx].maxTokens = 20; clients[idx].refillTicks = 2; clients[idx].refillAmount = 1; clients[idx].tickSinceRefill = 0;
+                            clients[idx].connId = g_nextConnId++;
+                            char host[64] = {0}, serv[16] = {0};
+                            if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+                                strncpy(host, "?", sizeof(host)-1); strncpy(serv, "?", sizeof(serv)-1);
+                            }
+                            strncpy(clients[idx].addr, host, sizeof(clients[idx].addr)-1);
+                            strncpy(clients[idx].port, serv, sizeof(clients[idx].port)-1);
+                            place_near_spawn(&clients[idx]);
+                            char you[32]; int yn = snprintf(you, sizeof(you), "YOU %d\n", idx);
+                            send_text_to_client(idx, you, yn);
+                            send_full_map_to(idx);
+                        }
+                    }
                 } else {
                     const char *full = "FULL\n"; send(cs, full, (int)strlen(full), 0);
 #ifdef _WIN32
