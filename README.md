@@ -4,7 +4,7 @@ A tiny cross-platform terminal game written in C. Runs in PowerShell, bash, and 
 
 ## Features
 - 9x9 world grid loaded from `maps/` at startup (`x0-y0.txt` … `x8-y8.txt`, 40x18 each)
-- Tiles: `#` wall, `.` floor, `@` optional start marker, `X` restore lives (consumed), `W` goal
+- Tiles: `#` wall, `.` floor, `@` optional start marker, `X` restore lives (consumed), `W` goal, `S` global spawn
 - Colors: player cyan, enemies red, walls bright white, floor dim, goal purple, life pickup yellow
 - Shooting and destructible walls
   - Space fires in facing direction
@@ -21,7 +21,7 @@ A tiny cross-platform terminal game written in C. Runs in PowerShell, bash, and 
     - Scoreboard shows up to 16 connected players as colored `@` with 4-digit scores (e.g., 9999)
     - Minimap shows a 9x9 world overview with current map marked `X` and players as colored `@`
   - Hints (controls) below scoreboard/minimap
-  - Multiplayer loading screen: animated sparkles with centered “LOADING” shown until the client receives its first authoritative snapshot
+  - Multiplayer loading screen: animated sparkles with centered “LOADING” shown until the client receives its first authoritative snapshot (with a brief minimum display)
 - Multiplayer (optional)
   - Menu lets you choose Singleplayer or Multiplayer
   - In Multiplayer, enter `host[:port]` (default port 5555) to connect
@@ -122,7 +122,7 @@ Choose “Singleplayer” at the menu.
 
 The server searches for `maps/` relative to its working directory (`./maps/`, then `../maps/`, then `../../maps/`). Running from the repo root is simplest.
 
-2) Web client: open `webclient.html` (defaults to `ws://127.0.0.1:5556/ws`, editable in the page).
+2) Web client: open `webclient.html` (defaults to `wss://runcode.at/ws`; change to `ws://127.0.0.1:5556/ws` when running the local server).
    Native client: choose “Multiplayer”, enter `host[:port]` (default 5555), e.g. `127.0.0.1:5555`.
 
 While connecting and awaiting the first authoritative snapshot, the client displays an animated loading screen. The console client now ensures a brief minimum display so the animation is visible even on fast servers.
@@ -134,8 +134,9 @@ While connecting and awaiting the first authoritative snapshot, the client displ
 
 ## Map format
 - Each file is 18 lines x 40 characters wide.
-- Valid chars: `# . @ X W`
-  - `@` start is only considered in `x0-y0.txt` (client spawns there; server randomizes spawns for clients)
+- Valid chars: `# . @ X W S`
+  - `S` global spawn: preferred singleplayer spawn anywhere in the world; spawn maps grant brief contact immunity
+  - `@` start is only considered in `x0-y0.txt` (fallback if no `S` exists in singleplayer)
   - `X` restores lives to 3 and is consumed on pickup
   - `W` is the goal (ends game in singleplayer)
 
@@ -145,6 +146,7 @@ While connecting and awaiting the first authoritative snapshot, the client displ
   - `INPUT dx dy shoot` where `dx`/`dy` in {-1,0,1}, `shoot` in {0,1}
   - `BYE` (disconnect request)
 - Server → Client (snapshot each tick; lines may be interleaved):
+  - `TICK n` (monotonic server tick counter to help clients align snapshots)
   - `YOU id` (assigned once upon connect)
   - `PLAYER id wx wy x y color active hp invincibleTicks superTicks score`
     - `active` is 0/1
@@ -164,26 +166,11 @@ Authoritative rules in MP:
 ## Notes
 - ANSI on Windows: enabled via Virtual Terminal Processing; PowerShell or Windows Terminal recommended.
 - Performance: simple fixed timestep loop; CPU usage is low.
-- Web client: input cadence reduced (50 ms) and light smoothing/interpolation added for players, bullets, and enemies to match console feel; default WS endpoint is localhost.
+- Web client: input cadence ~100 ms; server-authoritative rendering (no client-side smoothing yet). Default WS endpoint is `wss://runcode.at/ws` and can be edited.
 - Cross-platform: no external deps.
 - Prebuilt binaries (`dungeon`, `server`, `.exe`) may be present in the repo root for convenience.
 
 ## Roadmap
-### Short-term
-- Health/score UI polish (icons, color tweaks)
-- Server rate limiting and lightweight anti-spam for INPUT
-- Basic config flags (enemy count, world size, port)
-
-### Mid-term
-- Latency smoothing: simple interpolation/extrapolation of remote players/bullets
-- Configurable/dynamic world size and streaming map I/O
-- Makefile/CMake and CI; Dockerized server
-- Optional PvE/PvP toggles and friendly fire control
-
-### Long-term
-- Persistence: high scores and per-user stats (files or SQLite)
-- Matchmaking/lobbies and optional spectator mode
-- Chat/emotes and simple cosmetics (color themes)
-- Cross-platform packaging (static builds where feasible)
+See `ROADMAP.md` for up-to-date status of completed items and future plans.
 
 Enjoy exploring the dungeon!

@@ -1,0 +1,32 @@
+# Roadmap
+
+Status reflects current repository state. Items listed as completed are implemented in the codebase at the time of writing.
+
+## Completed
+- Basic roguelite gameplay: 9x9 world grid, destructible walls, enemies, shooting.
+- Map I/O from `maps/` with inter-map door alignment and global spawn `S` support.
+- Singleplayer: lives, invincibility on hit, score for enemy kills, `X` pickup restores lives and grants brief super/invincibility, `W` goal to win.
+- HUD: HP line; scoreboard and minimap rendered under the map; hints.
+- Multiplayer TCP server with server-authoritative simulation for players, enemies, and bullets.
+- Multiplayer text protocol (`YOU`, `PLAYER`, `BULLET`, `ENEMY`, `TILE`, `TICK`, `FULL`).
+- Client console: MP loading screen with sparkles and minimum visible duration.
+- Native WebSocket support on server (secondary port), with per-IP limits and basic connection rate limiting.
+- Web client (`webclient.html`) consuming the same text protocol, with loading overlay and HUD including ping.
+
+## Short-term
+- Health/score UI polish (icons, color tweaks) in console and web clients.
+- Config flags for server (enemy count, ports) via environment or args.
+- Lightweight Dockerfile for the server and a simple Makefile.
+
+## Mid-term
+- Latency smoothing: interpolation/extrapolation for players and bullets in both clients.
+- Configurable/dynamic world size and streaming map I/O.
+- Continuous Integration (build + basic lint) and release assets for common platforms.
+- PvE/PvP toggles and friendly fire control.
+
+## Long-term
+- Persistence: high scores and per-user stats (files or SQLite).
+- Matchmaking/lobbies and optional spectator mode.
+- Chat/emotes and simple cosmetics (color themes).
+- Cross-platform packaging (static builds where feasible).
+
