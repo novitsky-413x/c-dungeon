@@ -122,10 +122,10 @@ Choose “Singleplayer” at the menu.
 
 The server searches for `maps/` relative to its working directory (`./maps/`, then `../maps/`, then `../../maps/`). Running from the repo root is simplest.
 
-2) Web client: open `webclient.html` (connects to `ws://runcode.at:5556/ws`).
+2) Web client: open `webclient.html` (defaults to `ws://127.0.0.1:5556/ws`, editable in the page).
    Native client: choose “Multiplayer”, enter `host[:port]` (default 5555), e.g. `127.0.0.1:5555`.
 
-While connecting and awaiting the first authoritative snapshot, the client displays an animated loading screen.
+While connecting and awaiting the first authoritative snapshot, the client displays an animated loading screen. The console client now ensures a brief minimum display so the animation is visible even on fast servers.
 
 ## Controls
 - Move: WASD or Arrow keys
@@ -164,6 +164,7 @@ Authoritative rules in MP:
 ## Notes
 - ANSI on Windows: enabled via Virtual Terminal Processing; PowerShell or Windows Terminal recommended.
 - Performance: simple fixed timestep loop; CPU usage is low.
+- Web client: input cadence reduced (50 ms) and light smoothing/interpolation added for players, bullets, and enemies to match console feel; default WS endpoint is localhost.
 - Cross-platform: no external deps.
 - Prebuilt binaries (`dungeon`, `server`, `.exe`) may be present in the repo root for convenience.
 
