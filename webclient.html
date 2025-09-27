@@ -66,6 +66,8 @@
     let inputTimer = null;
     // Track whether the current map (world tile) is fully received
     let initialMapLoaded = false;
+    const MIN_LOADING_MS = 500; // match console minimal loading duration
+    let loadingStartAt = 0;
     let loadingAnimTick = 0;
     let currentWorldX = -1, currentWorldY = -1;
     let joined = false; // becomes true after we receive our PLAYER line with active=1
@@ -90,6 +92,29 @@
     const bullets = []; // array of {wx, wy, x, y, active, _last:{wx,wy,x,y}, _lastUpdateTick:number}
     const enemies = []; // array of {wx, wy, x, y, hp}
 
+    // Track per-tile receipt for the current world tile to robustly detect full-load
+    let tileRecv = null; // 2D array [MAP_HEIGHT][MAP_WIDTH] of booleans
+    let tileRecvCount = 0;
+    function resetTileRecv() {
+        tileRecv = new Array(MAP_HEIGHT);
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            tileRecv[y] = new Array(MAP_WIDTH).fill(false);
+        }
+        tileRecvCount = 0;
+    }
+    function resetLoadingTracker() {
+        initialMapLoaded = false;
+        loadingAnimTick = 0;
+        loadingStartAt = performance.now();
+        resetTileRecv();
+    }
+    function isLoadingActive() {
+        if (!joined) return true;
+        if (!initialMapLoaded) return true;
+        if ((performance.now() - loadingStartAt) < MIN_LOADING_MS) return true;
+        return false;
+    }
+
     function setStatus(text) { statusEl.textContent = text; }
 
     // Default endpoint; can be overridden via input
@@ -102,7 +127,7 @@
         recvBuf = "";
         youId = -1;
         joined = false;
-        currentWorldX = -1; currentWorldY = -1; initialMapLoaded = false; loadingAnimTick = 0;
+        currentWorldX = -1; currentWorldY = -1; resetLoadingTracker();
         connectAbort = false;
 
         const target = (serverUrlInput.value && serverUrlInput.value.trim()) ? serverUrlInput.value.trim() : DEFAULT_ENDPOINT;
@@ -219,6 +244,7 @@
         if (tag === "YOU") {
             if (parts.length >= 2) youId = parseInt(parts[1], 10);
             joined = true;
+            if (!loadingStartAt) loadingStartAt = performance.now();
             setStatus(`Joined, you are id ${youId}`);
             return;
         }
@@ -248,7 +274,7 @@
                 joined = true;
                 if (currentWorldX !== wx || currentWorldY !== wy) {
                     currentWorldX = wx; currentWorldY = wy;
-                    initialMapLoaded = false; loadingAnimTick = 0;
+                    resetLoadingTracker();
                 }
             }
             return;
@@ -300,9 +326,11 @@
             const ch = chToken.length ? chToken[0] : '.';
             if (wy>=0 && wy<WORLD_H && wx>=0 && wx<WORLD_W && y>=0 && y<MAP_HEIGHT && x>=0 && x<MAP_WIDTH) {
                 worldTiles[wy][wx][y][x] = ch;
-                // Mark map loaded when last tile of the current world tile arrives
+                // Count unique tiles received for current world tile to decide loaded
                 if (wx === currentWorldX && wy === currentWorldY) {
-                    if (x === MAP_WIDTH - 1 && y === MAP_HEIGHT - 1) initialMapLoaded = true;
+                    if (!tileRecv) resetTileRecv();
+                    if (!tileRecv[y][x]) { tileRecv[y][x] = true; tileRecvCount++; }
+                    if (tileRecvCount >= MAP_WIDTH * MAP_HEIGHT) initialMapLoaded = true;
                 }
             }
             return;
@@ -363,7 +391,7 @@
         ctx.font = `${TILE_SIZE - 2}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
         ctx.textBaseline = "top";
         // If not yet loaded, draw animated loading overlay but keep entities visible underneath
-        if (!initialMapLoaded) {
+        if (isLoadingActive()) {
             // draw entities faintly to orient the player while map loads
             ctx.globalAlpha = 0.35;
             for (let y = 0; y < MAP_HEIGHT; y++) {
@@ -378,7 +406,7 @@
             // entities overlay
             for (const e of enemies) { if (e.wx===wx && e.wy===wy) { ctx.fillStyle = "#ef4444"; ctx.fillText('E', e.x*TILE_SIZE+1, e.y*TILE_SIZE+1); } }
             for (const b of bullets) { if (b.active && b.wx===wx && b.wy===wy) { ctx.fillStyle = "#22c55e"; ctx.fillText('*', b.x*TILE_SIZE+1, b.y*TILE_SIZE+1); } }
-            for (let i=0;i<players.length;i++){ const p=players[i]; if(p&&p.active&&p.wx===wx&&p.wy===wy){ ctx.fillStyle=(i===youId)?"#22d3ee":colorFromIndex(p.color); ctx.fillText('@', p.x*TILE_SIZE+1, p.y*TILE_SIZE+1);} }
+            for (let i=0;i<players.length;i++){ const p=players[i]; if(p&&p.active&&p.wx===wx&&p.wy===wy){ ctx.fillStyle=colorFromIndex(p.color); ctx.fillText('@', p.x*TILE_SIZE+1, p.y*TILE_SIZE+1);} }
             ctx.globalAlpha = 1.0;
             // loading overlay on top
             drawLoading();
@@ -474,7 +502,7 @@
             const isYou = (i === youId);
             const flicker = p.invincibleTicks > 0 && ((p.invincibleTicks >> 3) & 1);
             if (flicker && isYou) continue;
-            ctx.fillStyle = isYou ? "#22d3ee" : colorFromIndex(p.color);
+            ctx.fillStyle = colorFromIndex(p.color);
             ctx.fillText('@', px + 1, py + 1);
         }
 
@@ -494,7 +522,7 @@
         const rightX = leftX + scoreboardWidthPx;
         ctx.fillText("Scoreboard", leftX, titleY);
         ctx.fillText("Minimap", rightX, titleY);
-        if (!me || !initialMapLoaded) {
+        if (!me || isLoadingActive()) {
             ctx.fillStyle = "#9fb2d6";
             ctx.fillText("Loading starting map...", leftX, titleY - TILE_SIZE + 2);
         }
@@ -543,10 +571,18 @@
     }
 
     function colorFromIndex(idx) {
-        // Approximate terminal bright ANSI palette for other players
-        const palette = ["#22d3ee","#ef4444","#22c55e","#facc15","#d946ef","#14b8a6","#f97316","#60a5fa",
-                         "#f472b6","#38bdf8","#fb7185","#94a3b8","#fca5a5","#e5e7eb","#86efac","#f8b4a0"]; // up to 16
-        return palette[idx % palette.length];
+        // Match console mapping for first 6: blue, magenta, cyan, green, yellow, red
+        const palette = [
+            "#60a5fa", // bright blue
+            "#d946ef", // bright magenta
+            "#22d3ee", // bright cyan
+            "#22c55e", // bright green
+            "#facc15", // bright yellow
+            "#ef4444", // bright red
+            // Fallback extended colors (not used by console mapping but kept for safety)
+            "#f97316", "#38bdf8", "#f472b6", "#86efac", "#94a3b8", "#fca5a5", "#e5e7eb", "#14b8a6"
+        ];
+        return palette[Math.abs(idx) % palette.length];
     }
 
     // Loading screen similar to console: dim dots, sparkles, LOADING text
