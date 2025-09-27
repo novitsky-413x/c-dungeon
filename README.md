@@ -132,6 +132,10 @@ While connecting and awaiting the first authoritative snapshot, the client displ
 - Shoot: Space
 - Quit: Q
 
+Mobile web:
+- On phones/tablets the web client shows on-screen controls automatically (D-pad + Shoot).
+- The canvas scales to the viewport on small screens; desktop layout remains unchanged.
+
 ## Map format
 - Each file is 18 lines x 40 characters wide.
 - Valid chars: `# . @ X W S`

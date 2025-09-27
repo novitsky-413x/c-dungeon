@@ -194,6 +194,7 @@ Input mapping:
 
 - Canvas-based renderer mirroring console visuals and the same text protocol over WebSocket.
 - Sends `INPUT` on a fixed cadence (~100 ms), pings every second with tokens for RTT, displays HUD with HP and Ping, shows a loading overlay until the first full map is received.
+- Mobile support: detects coarse-pointer devices and shows a touch D-pad and Shoot button; inputs are merged with keyboard state. Canvas scales responsively on small screens without affecting desktop layout.
 
 References:
 - WebSocket API: `https://developer.mozilla.org/docs/Web/API/WebSocket`
