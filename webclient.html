@@ -103,10 +103,17 @@
         tileRecvCount = 0;
     }
     function resetLoadingTracker() {
-        initialMapLoaded = false;
-        loadingAnimTick = 0;
-        loadingStartAt = performance.now();
-        resetTileRecv();
+        // Trigger loading overlay only for the initial map. For subsequent
+        // maps, keep the overlay disabled and only reset per-tile tracking.
+        if (!initialMapLoaded) {
+            initialMapLoaded = false;
+            loadingAnimTick = 0;
+            loadingStartAt = performance.now();
+            resetTileRecv();
+        } else {
+            // Subsequent map transitions: no loading overlay
+            resetTileRecv();
+        }
     }
     function isLoadingActive() {
         if (!joined) return true;

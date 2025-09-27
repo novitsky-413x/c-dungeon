@@ -2,6 +2,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <time.h>
 #endif
 

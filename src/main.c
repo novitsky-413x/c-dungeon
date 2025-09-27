@@ -1,3 +1,9 @@
+// Enable POSIX prototypes for nanosleep/usleep on Unix
+#ifndef _WIN32
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -63,7 +69,7 @@ int main(void) {
 #ifdef _WIN32
             Sleep(30);
 #else
-            usleep(30000);
+            struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 30 * 1000000L; nanosleep(&ts, NULL);
 #endif
         }
     }
@@ -79,7 +85,7 @@ int main(void) {
 #ifdef _WIN32
                 Sleep(30);
 #else
-                usleep(30000);
+                struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 30 * 1000000L; nanosleep(&ts, NULL);
 #endif
                 continue;
             }
