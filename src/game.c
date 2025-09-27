@@ -358,6 +358,7 @@ void game_draw(void) {
     #define APPEND_FMT(...) do { int __rem = cap - pos; if (__rem > 0) { int __w = snprintf(frame + pos, __rem, __VA_ARGS__); if (__w < 0) { /* ignore */ } else if (__w >= __rem) { pos = cap; } else { pos += __w; } } } while (0)
     APPEND_FMT("\x1b[r\x1b[2J\x1b[H");
     for (int y = 0; y < MAP_HEIGHT; ++y) {
+        APPEND_FMT("\x1b[%d;1H\x1b[K", y + 1);
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_WHITE;
             char out;
@@ -443,8 +444,7 @@ void game_draw(void) {
             }
             APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
-        // Clear to end of line to avoid leftover characters from previous screens
-        APPEND_FMT("\x1b[K\r\n");
+        APPEND_FMT("");
     }
     // Overlay remote players for this map (includes self in MP)
     if (g_mp_active) {
@@ -627,12 +627,12 @@ void game_draw_loading(int tick) {
     APPEND_FMT("\x1b[r\x1b[2J\x1b[H");
     // Draw background with dim dots
     for (int y = 0; y < MAP_HEIGHT; ++y) {
+        APPEND_FMT("\x1b[%d;1H\x1b[K", y + 1);
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_BRIGHT_BLACK;
             char out = '.';
             APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
-        APPEND_FMT("\x1b[K\r\n");
     }
     // Sparkles: pseudo-random deterministic per tick to avoid rand() here
     int sparkCount = 30; // number of sparkles per frame
