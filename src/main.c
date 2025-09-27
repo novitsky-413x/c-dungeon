@@ -100,6 +100,8 @@ int main(void) {
             printf("\nFailed to connect. Starting singleplayer.\n");
         }
     }
+    // Clear menu before starting the game to avoid leftover lines in some shells (e.g., zsh on macOS)
+    term_clear_screen();
 
     game_init();
     game_spawn_enemies(4);
