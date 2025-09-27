@@ -343,12 +343,13 @@ int game_tick_status(void) {
 }
 
 void game_draw(void) {
-    // Increase buffer to account for ANSI color sequences per cell
-    char frame[16384];
+    // Larger buffer and safe appends to avoid truncation issues on some terminals
+    char frame[65536];
     int pos = 0;
     int cap = (int)sizeof(frame);
-    int n = snprintf(frame + pos, cap - pos, "\x1b[H");
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+    // Safe append macro: advances by actual written bytes; clamps on truncation
+    #define APPEND_FMT(...) do { int __rem = cap - pos; if (__rem > 0) { int __w = snprintf(frame + pos, __rem, __VA_ARGS__); if (__w < 0) { /* ignore */ } else if (__w >= __rem) { pos = cap; } else { pos += __w; } } } while (0)
+    APPEND_FMT("\x1b[H");
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_WHITE;
@@ -433,12 +434,10 @@ void game_draw(void) {
                     else { out = ' '; color = TERM_FG_WHITE; }
                 }
             }
-            n = snprintf(frame + pos, cap - pos, "%s%c%s", color, out, TERM_SGR_RESET);
-            if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+            APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
         // Clear to end of line to avoid leftover characters from previous screens
-        n = snprintf(frame + pos, cap - pos, "\x1b[K\n");
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+        APPEND_FMT("\x1b[K\n");
     }
     // Overlay remote players for this map (includes self in MP)
     if (g_mp_active) {
@@ -483,27 +482,24 @@ void game_draw(void) {
                         case 4: pcolor = TERM_FG_BRIGHT_YELLOW; break;
                         case 5: pcolor = TERM_FG_BRIGHT_RED; break;
                     }
-                    n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s@%s", ry + 1, rx + 1, pcolor, TERM_SGR_RESET);
-                    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+                    APPEND_FMT("\x1b[%d;%dH%s@%s", ry + 1, rx + 1, pcolor, TERM_SGR_RESET);
                 }
             }
         }
     }
     // Ensure cursor is moved below the map before printing HUD
-    n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH", MAP_HEIGHT + 1, 1);
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+    APPEND_FMT("\x1b[%d;%dH", MAP_HEIGHT + 1, 1);
     if (g_mp_active) {
         int myhp = 0;
         if (g_my_player_id >= 0 && g_my_player_id < MAX_REMOTE_PLAYERS && g_remote_players[g_my_player_id].active) myhp = g_remote_players[g_my_player_id].hp;
         // HP and Ping directly under map
         extern int g_net_ping_ms;
-        if (g_net_ping_ms >= 0) n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d   Ping: %d ms\n", myhp, g_net_ping_ms);
-        else n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d   Ping: -- ms\n", myhp);
+        if (g_net_ping_ms >= 0) APPEND_FMT("\x1b[KHP: %d   Ping: %d ms\n", myhp, g_net_ping_ms);
+        else APPEND_FMT("\x1b[KHP: %d   Ping: -- ms\n", myhp);
     } else {
         // HP directly under map (score will be shown in the scoreboard)
-        n = snprintf(frame + pos, cap - pos, "\x1b[KHP: %d\n", game_player_lives);
+        APPEND_FMT("\x1b[KHP: %d\n", game_player_lives);
     }
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
 
     // Scoreboard (left) and Minimap (right) on the same row
     int baseRow = MAP_HEIGHT + 2; // start right after HP line
@@ -514,13 +510,11 @@ void game_draw(void) {
     int rightCol = leftCol + cols * cellW + gap; // place minimap to the right of the scoreboard
 
     // Titles on the same line
-    n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH\x1b[KScoreboard\x1b[%d;%dH\x1b[KMinimap\n", baseRow, leftCol, baseRow, rightCol);
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+    APPEND_FMT("\x1b[%d;%dH\x1b[KScoreboard\x1b[%d;%dH\x1b[KMinimap\n", baseRow, leftCol, baseRow, rightCol);
 
     // Render a 4x4 table of player slots, showing colored '@' and a simple score
     for (int r = 0; r < rows; ++r) {
-        n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH\x1b[K", baseRow + 1 + r, leftCol);
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+        APPEND_FMT("\x1b[%d;%dH\x1b[K", baseRow + 1 + r, leftCol);
         for (int c = 0; c < cols; ++c) {
             int idx = r * cols + c;
             const char *pcolor = TERM_FG_BRIGHT_BLACK;
@@ -545,11 +539,10 @@ void game_draw(void) {
                 if (idx == 0) { showAt = 1; pcolor = TERM_FG_BRIGHT_CYAN; scoreVal = game_score; }
             }
             if (showAt) {
-                n = snprintf(frame + pos, cap - pos, "%s@%s%4d  ", pcolor, TERM_SGR_RESET, scoreVal);
+                APPEND_FMT("%s@%s%4d  ", pcolor, TERM_SGR_RESET, scoreVal);
             } else {
-                n = snprintf(frame + pos, cap - pos, "       ");
+                APPEND_FMT("       ");
             }
-            if (n > 0) { pos += n; if (pos > cap) pos = cap; }
         }
     }
 
@@ -557,8 +550,7 @@ void game_draw(void) {
     int miniRow = baseRow + 1; // align top rows of both sections
     for (int my = 0; my < WORLD_H; ++my) {
         // Position cursor at the start of this minimap row
-        n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH\x1b[K", miniRow + my, rightCol);
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+        APPEND_FMT("\x1b[%d;%dH\x1b[K", miniRow + my, rightCol);
         for (int mx = 0; mx < WORLD_W; ++mx) {
             char ch = '.';
             const char *pcolor = TERM_FG_BRIGHT_BLACK;
@@ -584,42 +576,38 @@ void game_draw(void) {
             } else {
                 // Singleplayer: keep 'X' for current map; no overlay
             }
-            n = snprintf(frame + pos, cap - pos, "%s%c%s", pcolor, ch, TERM_SGR_RESET);
-            if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+            APPEND_FMT("%s%c%s", pcolor, ch, TERM_SGR_RESET);
         }
     }
 
     // Hints below both sections
     int hintsRow = miniRow + WORLD_H + 1;
-    n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH\x1b[KUse WASD/Arrows to move, Space to shoot.\n", hintsRow, 1);
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+    APPEND_FMT("\x1b[%d;%dH\x1b[KUse WASD/Arrows to move, Space to shoot.\n", hintsRow, 1);
     if (!g_mp_active) {
-        n = snprintf(frame + pos, cap - pos, "\x1b[KFind purple W to win. Press Q to quit.\n");
+        APPEND_FMT("\x1b[KFind purple W to win. Press Q to quit.\n");
     } else {
-        n = snprintf(frame + pos, cap - pos, "\x1b[KPress Q to quit.\n");
+        APPEND_FMT("\x1b[KPress Q to quit.\n");
     }
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
 
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
+    #undef APPEND_FMT
 }
 
 void game_draw_loading(int tick) {
     // Simple animated loading screen the size of the map area
-    char frame[16384];
+    char frame[65536];
     int pos = 0; int cap = (int)sizeof(frame);
-    int n = snprintf(frame + pos, cap - pos, "\x1b[H");
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+    #define APPEND_FMT(...) do { int __rem = cap - pos; if (__rem > 0) { int __w = snprintf(frame + pos, __rem, __VA_ARGS__); if (__w < 0) { /* ignore */ } else if (__w >= __rem) { pos = cap; } else { pos += __w; } } } while (0)
+    APPEND_FMT("\x1b[H");
     // Draw background with dim dots
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_BRIGHT_BLACK;
             char out = '.';
-            n = snprintf(frame + pos, cap - pos, "%s%c%s", color, out, TERM_SGR_RESET);
-            if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+            APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
-        n = snprintf(frame + pos, cap - pos, "\x1b[K\n");
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+        APPEND_FMT("\x1b[K\n");
     }
     // Sparkles: pseudo-random deterministic per tick to avoid rand() here
     int sparkCount = 30; // number of sparkles per frame
@@ -630,34 +618,29 @@ void game_draw_loading(int tick) {
         const char *scolor = TERM_FG_BRIGHT_YELLOW;
         char schar = '*';
         // position cursor and draw sparkle
-        n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s%c%s", sy + 1, sx + 1, scolor, schar, TERM_SGR_RESET);
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+        APPEND_FMT("\x1b[%d;%dH%s%c%s", sy + 1, sx + 1, scolor, schar, TERM_SGR_RESET);
     }
     // Centered LOADING text
     const char *text = "LOADING";
     int tlen = (int)strlen(text);
     int cx = (MAP_WIDTH - tlen) / 2;
     int cy = MAP_HEIGHT / 2;
-    n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s%s%s", cy + 1, cx + 1, TERM_FG_BRIGHT_WHITE, text, TERM_SGR_RESET);
-    if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+    APPEND_FMT("\x1b[%d;%dH%s%s%s", cy + 1, cx + 1, TERM_FG_BRIGHT_WHITE, text, TERM_SGR_RESET);
 
     // Draw a subtle border around the map area using bright white
     // Top and bottom borders
     for (int x = 0; x < MAP_WIDTH; ++x) {
-        n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s-%s", 1, x + 1, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
-        n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s-%s", MAP_HEIGHT, x + 1, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+        APPEND_FMT("\x1b[%d;%dH%s-%s", 1, x + 1, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
+        APPEND_FMT("\x1b[%d;%dH%s-%s", MAP_HEIGHT, x + 1, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
     }
     for (int y = 0; y < MAP_HEIGHT; ++y) {
-        n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s|%s", y + 1, 1, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
-        n = snprintf(frame + pos, cap - pos, "\x1b[%d;%dH%s|%s", y + 1, MAP_WIDTH, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
-        if (n > 0) { pos += n; if (pos > cap) pos = cap; }
+        APPEND_FMT("\x1b[%d;%dH%s|%s", y + 1, 1, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
+        APPEND_FMT("\x1b[%d;%dH%s|%s", y + 1, MAP_WIDTH, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
     }
 
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
+    #undef APPEND_FMT
 }
 
 // --- MP helpers ---
