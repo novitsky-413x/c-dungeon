@@ -43,7 +43,7 @@ static void handleInput(void) {
 
 static void print_menu(void) {
     term_clear_screen();
-    printf("Dungeon\n\n1) Singleplayer\n2) Multiplayer\nSelect: ");
+    printf("Dungeon\n\n1) Singleplayer (S)\n2) Multiplayer (M)\nSelect [1/2/S/M]: ");
     fflush(stdout);
 }
 
@@ -63,7 +63,8 @@ int main(void) {
     print_menu();
     while (!mode) {
         int c = input_read_nonblocking();
-        if (c == '1') mode = 1; else if (c == '2') mode = 2;
+        if (c == '1' || c == 's' || c == 'S') mode = 1;
+        else if (c == '2' || c == 'm' || c == 'M') mode = 2;
         if (!mode) {
             // small sleep
 #ifdef _WIN32
