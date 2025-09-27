@@ -31,6 +31,11 @@ A tiny cross-platform terminal game written in C. Runs in PowerShell, bash, and 
     - +1 per enemy kill (to the shooter)
     - +10 per player kill (PvP, to the shooter)
 
+## Cross-platform terminal robustness
+- POSIX (Linux/macOS): renderer uses absolute cursor positioning with per-row clearing, resets scroll region per frame, disables autowrap in the alternate screen, and uses a robust `write(2)` loop with `EINTR/EAGAIN` handling plus `tcdrain()` to ensure complete frames.
+- Windows: uses stdio (`fwrite` + `fflush`) with Virtual Terminal sequences enabled.
+- Output is unbuffered (`setvbuf(stdout, NULL, _IONBF, 0)`) and initial frames are force-redrawn to fully paint the screen.
+
 ## Layout
 ```
 C:\Projects\c\c-dungeon
@@ -95,6 +100,14 @@ If you see a warning about including `winsock2.h` before `windows.h`, the projec
   ```bash
   gcc src/server/server.c -o server
   ```
+
+### Compatibility and terminal notes
+- Apple Terminal and zsh are supported. The game enters the alternate screen, disables autowrap, clears and redraws from the absolute origin each frame.
+- If you ever see a partially drawn frame:
+  - Make sure your window is at least 40 columns × 18 rows (HP/HUD needs a bit more; larger is fine).
+  - Avoid running inside tmux/multiplexers while debugging terminal issues.
+  - In Apple Terminal Preferences → Profiles → Advanced, keep “Allow VT100 application keypad mode” enabled.
+  - Resize the window slightly (forces the terminal to refresh its state) and rerun.
 
 ## Run
 ### Singleplayer
@@ -173,6 +186,9 @@ Authoritative rules in MP:
 - Web client: input cadence ~100 ms; server-authoritative rendering (no client-side smoothing yet). Default WS endpoint is `wss://runcode.at/ws` and can be edited.
 - Cross-platform: no external deps.
 - Prebuilt binaries (`dungeon`, `server`, `.exe`) may be present in the repo root for convenience.
+
+### Changelog (recent)
+- Stabilized terminal rendering across macOS/Linux/Windows: absolute addressing, autowrap disabled in alt screen, robust POSIX write loop with drain, unbuffered stdout, per-frame scroll-region reset, warmup redraw frames.
 
 ## Roadmap
 See `ROADMAP.md` for up-to-date status of completed items and future plans.

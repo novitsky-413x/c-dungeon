@@ -42,6 +42,8 @@ References:
 ## Terminal Utilities (`src/term.h`, `src/term.c`)
 
 - Enables ANSI sequences, toggles cursor visibility, clears screen, enters/exits alternate buffer, and configures raw input mode (POSIX only).
+- Alt screen: autowrap is disabled on entry and restored on exit; scroll region is reset each frame by the renderer to avoid residual terminal state.
+- A helper `term_get_size(int* rows, int* cols)` queries the current terminal size (Windows console or POSIX via `ioctl(TIOCGWINSZ)`).
 - Windows: uses `SetConsoleMode` with `ENABLE_VIRTUAL_TERMINAL_PROCESSING`.
 - POSIX: uses `termios` to disable canonical mode and echo, and `fcntl` to set `O_NONBLOCK`.
 
@@ -145,6 +147,12 @@ Responsibilities:
 - Singleplayer: player lives/score, enemies, projectiles, wall damage, win condition `W`.
 - Multiplayer: disable local AI/projectiles; render server state via overlays; smoothing for remote players/bullets.
 - Rendering: map grid, players/enemies/bullets, HUD (HP, Ping), scoreboard, minimap, loading animation for MP.
+  - Rendering details (terminal stability):
+    - Absolute cursor addressing for each row (`ESC[y;1H`) with per-row clear (`ESC[K`), avoiding reliance on newlines.
+    - Scroll region reset (`ESC[r]`) and full clear at frame start.
+    - POSIX: robust `write()` loop with `EINTR/EAGAIN` handling and `tcdrain()` to ensure frames fully reach the terminal; Windows: `fwrite`+`fflush`.
+    - Stdout is unbuffered and a few initial warmup frames are forced to paint the screen completely.
+    - HUD/minimap adapts to terminal width; minimap hides if there isn’t enough space.
 
 Important functions:
 - `game_init`, `world_init`, `load_map_file`.

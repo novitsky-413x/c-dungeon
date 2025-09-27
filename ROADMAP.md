@@ -10,6 +10,7 @@ Status reflects current repository state. Items listed as completed are implemen
 - Multiplayer TCP server with server-authoritative simulation for players, enemies, and bullets.
 - Multiplayer text protocol (`YOU`, `PLAYER`, `BULLET`, `ENEMY`, `TILE`, `TICK`, `FULL`).
 - Client console: MP loading screen with sparkles and minimum visible duration.
+- Cross-platform terminal stability: absolute cursor addressing with per-row clear, alt-screen autowrap off/on, robust POSIX write loop with drain, unbuffered stdout, per-frame scroll-region reset, warmup redraw frames.
 - Native WebSocket support on server (secondary port), with per-IP limits and basic connection rate limiting.
 - Web client (`webclient.html`) consuming the same text protocol, with loading overlay and HUD including ping.
 
@@ -17,12 +18,14 @@ Status reflects current repository state. Items listed as completed are implemen
 - Health/score UI polish (icons, color tweaks) in console and web clients.
 - Config flags for server (enemy count, ports) via environment or args.
 - Lightweight Dockerfile for the server and a simple Makefile.
+ - Strip zero-length writes and tighten renderer macros.
 
 ## Mid-term
 - Latency smoothing: interpolation/extrapolation for players and bullets in both clients.
 - Configurable/dynamic world size and streaming map I/O.
 - Continuous Integration (build + basic lint) and release assets for common platforms.
 - PvE/PvP toggles and friendly fire control.
+ - Terminal integration tests on macOS (Apple Terminal, iTerm2) and Linux (xterm, GNOME Terminal).
 
 ## Long-term
 - Persistence: high scores and per-user stats (files or SQLite).
