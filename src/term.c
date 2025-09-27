@@ -5,6 +5,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 static struct termios originalTermios;
 #endif
 
@@ -44,14 +45,39 @@ void term_clear_screen(void) {
 
 void term_enter_alt_screen(void) {
     if (!ansi_inited) term_enable_ansi();
-    printf("\x1b[?1049h");
+    // Enter alternate screen, disable autowrap, ensure absolute origin mode
+    printf("\x1b[?1049h\x1b[?7l\x1b[?6l");
     fflush(stdout);
 }
 
 void term_exit_alt_screen(void) {
     if (!ansi_inited) term_enable_ansi();
-    printf("\x1b[?1049l");
+    // Restore autowrap and leave alternate screen
+    printf("\x1b[?7h\x1b[?1049l");
     fflush(stdout);
+}
+
+void term_get_size(int *outRows, int *outCols) {
+#ifdef _WIN32
+    int rows = 24, cols = 80;
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (hOut != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(hOut, &csbi)) {
+        cols = (int)(csbi.srWindow.Right - csbi.srWindow.Left + 1);
+        rows = (int)(csbi.srWindow.Bottom - csbi.srWindow.Top + 1);
+    }
+    if (outRows) *outRows = rows;
+    if (outCols) *outCols = cols;
+#else
+    int rows = 24, cols = 80;
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        if (ws.ws_row) rows = ws.ws_row;
+        if (ws.ws_col) cols = ws.ws_col;
+    }
+    if (outRows) *outRows = rows;
+    if (outCols) *outCols = cols;
+#endif
 }
 
 #ifndef _WIN32

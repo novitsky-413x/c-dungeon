@@ -7,6 +7,7 @@ void term_show_cursor(void);
 void term_clear_screen(void);
 void term_enter_alt_screen(void);
 void term_exit_alt_screen(void);
+void term_get_size(int *outRows, int *outCols);
 
 // ANSI SGR color codes (foreground)
 #define TERM_SGR_RESET "\x1b[0m"

@@ -1,6 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h> // write, STDOUT_FILENO
+#include <sys/types.h> // ssize_t
+#include <errno.h>
+#include <time.h>
+#include <termios.h>
+#endif
 #include "types.h"
 #include "term.h"
 #include "mp.h"
@@ -349,8 +356,9 @@ void game_draw(void) {
     int cap = (int)sizeof(frame);
     // Safe append macro: advances by actual written bytes; clamps on truncation
     #define APPEND_FMT(...) do { int __rem = cap - pos; if (__rem > 0) { int __w = snprintf(frame + pos, __rem, __VA_ARGS__); if (__w < 0) { /* ignore */ } else if (__w >= __rem) { pos = cap; } else { pos += __w; } } } while (0)
-    APPEND_FMT("\x1b[H");
+    APPEND_FMT("\x1b[r\x1b[2J\x1b[H");
     for (int y = 0; y < MAP_HEIGHT; ++y) {
+        APPEND_FMT("\x1b[%d;1H\x1b[K", y + 1);
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_WHITE;
             char out;
@@ -436,8 +444,7 @@ void game_draw(void) {
             }
             APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
-        // Clear to end of line to avoid leftover characters from previous screens
-        APPEND_FMT("\x1b[K\r\n");
+        
     }
     // Overlay remote players for this map (includes self in MP)
     if (g_mp_active) {
@@ -489,6 +496,8 @@ void game_draw(void) {
     }
     // Ensure cursor is moved below the map before printing HUD
     APPEND_FMT("\x1b[%d;%dH", MAP_HEIGHT + 1, 1);
+    int termRows = 24, termCols = 80;
+    term_get_size(&termRows, &termCols);
     if (g_mp_active) {
         int myhp = 0;
         if (g_my_player_id >= 0 && g_my_player_id < MAX_REMOTE_PLAYERS && g_remote_players[g_my_player_id].active) myhp = g_remote_players[g_my_player_id].hp;
@@ -509,8 +518,19 @@ void game_draw(void) {
     int gap = 4;
     int rightCol = leftCol + cols * cellW + gap; // place minimap to the right of the scoreboard
 
+    int needCols = rightCol + WORLD_W; // rough width including minimap
+    int needRows = baseRow + 1 + (rows > WORLD_H ? rows : WORLD_H) + 2; // up to hints
+    int showMinimap = (termCols >= needCols);
+    int showScoreboard = 1;
+    if (!showMinimap) {
+        // If width tight, keep scoreboard and drop minimap
+        rightCol = termCols + 1; // place offscreen
+    }
+
     // Titles on the same line
-    APPEND_FMT("\x1b[%d;%dH\x1b[KScoreboard\x1b[%d;%dH\x1b[KMinimap\r\n", baseRow, leftCol, baseRow, rightCol);
+    APPEND_FMT("\x1b[%d;%dH\x1b[KScoreboard", baseRow, leftCol);
+    if (showMinimap) APPEND_FMT("\x1b[%d;%dH\x1b[KMinimap\r\n", baseRow, rightCol);
+    else APPEND_FMT("\r\n");
 
     // Render a 4x4 table of player slots, showing colored '@' and a simple score
     for (int r = 0; r < rows; ++r) {
@@ -548,6 +568,7 @@ void game_draw(void) {
 
     // Render a 9x9 grid of '.' with current map marked 'X' and players '@' (side-by-side on the same rows)
     int miniRow = baseRow + 1; // align top rows of both sections
+    if (showMinimap) {
     for (int my = 0; my < WORLD_H; ++my) {
         // Position cursor at the start of this minimap row
         APPEND_FMT("\x1b[%d;%dH\x1b[K", miniRow + my, rightCol);
@@ -579,9 +600,10 @@ void game_draw(void) {
             APPEND_FMT("%s%c%s", pcolor, ch, TERM_SGR_RESET);
         }
     }
+    }
 
     // Hints below both sections
-    int hintsRow = miniRow + WORLD_H + 1;
+    int hintsRow = showMinimap ? (miniRow + WORLD_H + 1) : (baseRow + rows + 1);
     APPEND_FMT("\x1b[%d;%dH\x1b[KUse WASD/Arrows to move, Space to shoot.\r\n", hintsRow, 1);
     if (!g_mp_active) {
         APPEND_FMT("\x1b[KFind purple W to win. Press Q to quit.\r\n");
@@ -594,13 +616,21 @@ void game_draw(void) {
     fflush(stdout);
     #else
     {
-        size_t toWrite = (size_t)(pos < cap ? pos : cap);
-        size_t written = 0;
-        while (written < toWrite) {
-            ssize_t w = write(STDOUT_FILENO, frame + written, toWrite - written);
-            if (w > 0) { written += (size_t)w; continue; }
+        size_t remaining = (size_t)(pos < cap ? pos : cap);
+        const char *ptr = frame;
+        while (remaining > 0) {
+            ssize_t w = write(STDOUT_FILENO, ptr, remaining);
+            if (w > 0) { ptr += (size_t)w; remaining -= (size_t)w; continue; }
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 1000000L; nanosleep(&ts, NULL);
+                    continue;
+                }
+            }
             break;
         }
+        tcdrain(STDOUT_FILENO);
     }
     #endif
     #undef APPEND_FMT
@@ -611,15 +641,15 @@ void game_draw_loading(int tick) {
     char frame[65536];
     int pos = 0; int cap = (int)sizeof(frame);
     #define APPEND_FMT(...) do { int __rem = cap - pos; if (__rem > 0) { int __w = snprintf(frame + pos, __rem, __VA_ARGS__); if (__w < 0) { /* ignore */ } else if (__w >= __rem) { pos = cap; } else { pos += __w; } } } while (0)
-    APPEND_FMT("\x1b[H");
+    APPEND_FMT("\x1b[r\x1b[2J\x1b[H");
     // Draw background with dim dots
     for (int y = 0; y < MAP_HEIGHT; ++y) {
+        APPEND_FMT("\x1b[%d;1H\x1b[K", y + 1);
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_BRIGHT_BLACK;
             char out = '.';
             APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
-        APPEND_FMT("\x1b[K\r\n");
     }
     // Sparkles: pseudo-random deterministic per tick to avoid rand() here
     int sparkCount = 30; // number of sparkles per frame
@@ -655,13 +685,21 @@ void game_draw_loading(int tick) {
     fflush(stdout);
     #else
     {
-        size_t toWrite = (size_t)(pos < cap ? pos : cap);
-        size_t written = 0;
-        while (written < toWrite) {
-            ssize_t w = write(STDOUT_FILENO, frame + written, toWrite - written);
-            if (w > 0) { written += (size_t)w; continue; }
+        size_t remaining = (size_t)(pos < cap ? pos : cap);
+        const char *ptr = frame;
+        while (remaining > 0) {
+            ssize_t w = write(STDOUT_FILENO, ptr, remaining);
+            if (w > 0) { ptr += (size_t)w; remaining -= (size_t)w; continue; }
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 1000000L; nanosleep(&ts, NULL);
+                    continue;
+                }
+            }
             break;
         }
+        tcdrain(STDOUT_FILENO);
     }
     #endif
     #undef APPEND_FMT
