@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h> // write, STDOUT_FILENO
+#include <sys/types.h> // ssize_t
+#endif
 #include "types.h"
 #include "term.h"
 #include "mp.h"
