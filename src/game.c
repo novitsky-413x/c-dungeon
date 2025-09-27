@@ -495,6 +495,8 @@ void game_draw(void) {
     }
     // Ensure cursor is moved below the map before printing HUD
     APPEND_FMT("\x1b[%d;%dH", MAP_HEIGHT + 1, 1);
+    int termRows = 24, termCols = 80;
+    term_get_size(&termRows, &termCols);
     if (g_mp_active) {
         int myhp = 0;
         if (g_my_player_id >= 0 && g_my_player_id < MAX_REMOTE_PLAYERS && g_remote_players[g_my_player_id].active) myhp = g_remote_players[g_my_player_id].hp;
@@ -515,8 +517,19 @@ void game_draw(void) {
     int gap = 4;
     int rightCol = leftCol + cols * cellW + gap; // place minimap to the right of the scoreboard
 
+    int needCols = rightCol + WORLD_W; // rough width including minimap
+    int needRows = baseRow + 1 + (rows > WORLD_H ? rows : WORLD_H) + 2; // up to hints
+    int showMinimap = (termCols >= needCols);
+    int showScoreboard = 1;
+    if (!showMinimap) {
+        // If width tight, keep scoreboard and drop minimap
+        rightCol = termCols + 1; // place offscreen
+    }
+
     // Titles on the same line
-    APPEND_FMT("\x1b[%d;%dH\x1b[KScoreboard\x1b[%d;%dH\x1b[KMinimap\r\n", baseRow, leftCol, baseRow, rightCol);
+    APPEND_FMT("\x1b[%d;%dH\x1b[KScoreboard", baseRow, leftCol);
+    if (showMinimap) APPEND_FMT("\x1b[%d;%dH\x1b[KMinimap\r\n", baseRow, rightCol);
+    else APPEND_FMT("\r\n");
 
     // Render a 4x4 table of player slots, showing colored '@' and a simple score
     for (int r = 0; r < rows; ++r) {
@@ -554,6 +567,7 @@ void game_draw(void) {
 
     // Render a 9x9 grid of '.' with current map marked 'X' and players '@' (side-by-side on the same rows)
     int miniRow = baseRow + 1; // align top rows of both sections
+    if (showMinimap) {
     for (int my = 0; my < WORLD_H; ++my) {
         // Position cursor at the start of this minimap row
         APPEND_FMT("\x1b[%d;%dH\x1b[K", miniRow + my, rightCol);
@@ -585,9 +599,10 @@ void game_draw(void) {
             APPEND_FMT("%s%c%s", pcolor, ch, TERM_SGR_RESET);
         }
     }
+    }
 
     // Hints below both sections
-    int hintsRow = miniRow + WORLD_H + 1;
+    int hintsRow = showMinimap ? (miniRow + WORLD_H + 1) : (baseRow + rows + 1);
     APPEND_FMT("\x1b[%d;%dH\x1b[KUse WASD/Arrows to move, Space to shoot.\r\n", hintsRow, 1);
     if (!g_mp_active) {
         APPEND_FMT("\x1b[KFind purple W to win. Press Q to quit.\r\n");
