@@ -444,7 +444,7 @@ void game_draw(void) {
             }
             APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
-        APPEND_FMT("");
+        
     }
     // Overlay remote players for this map (includes self in MP)
     if (g_mp_active) {
@@ -611,11 +611,28 @@ void game_draw(void) {
         APPEND_FMT("\x1b[KPress Q to quit.\r\n");
     }
 
+    #ifdef _WIN32
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
-#ifndef _WIN32
-    tcdrain(STDOUT_FILENO);
-#endif
+    #else
+    {
+        size_t remaining = (size_t)(pos < cap ? pos : cap);
+        const char *ptr = frame;
+        while (remaining > 0) {
+            ssize_t w = write(STDOUT_FILENO, ptr, remaining);
+            if (w > 0) { ptr += (size_t)w; remaining -= (size_t)w; continue; }
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 1000000L; nanosleep(&ts, NULL);
+                    continue;
+                }
+            }
+            break;
+        }
+        tcdrain(STDOUT_FILENO);
+    }
+    #endif
     #undef APPEND_FMT
 }
 
@@ -663,11 +680,28 @@ void game_draw_loading(int tick) {
         APPEND_FMT("\x1b[%d;%dH%s|%s", y + 1, MAP_WIDTH, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
     }
 
+    #ifdef _WIN32
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
-#ifndef _WIN32
-    tcdrain(STDOUT_FILENO);
-#endif
+    #else
+    {
+        size_t remaining = (size_t)(pos < cap ? pos : cap);
+        const char *ptr = frame;
+        while (remaining > 0) {
+            ssize_t w = write(STDOUT_FILENO, ptr, remaining);
+            if (w > 0) { ptr += (size_t)w; remaining -= (size_t)w; continue; }
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 1000000L; nanosleep(&ts, NULL);
+                    continue;
+                }
+            }
+            break;
+        }
+        tcdrain(STDOUT_FILENO);
+    }
+    #endif
     #undef APPEND_FMT
 }
 
