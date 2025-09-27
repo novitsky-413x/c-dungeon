@@ -57,6 +57,8 @@ int main(void) {
 #ifndef _WIN32
     term_enable_raw_mode();
 #endif
+    // Avoid partial/line-buffered output in some shells (e.g., macOS zsh)
+    setvbuf(stdout, NULL, _IONBF, 0);
 
     // Simple blocking menu (poll loop)
     int mode = 0;

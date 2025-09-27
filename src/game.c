@@ -4,6 +4,8 @@
 #ifndef _WIN32
 #include <unistd.h> // write, STDOUT_FILENO
 #include <sys/types.h> // ssize_t
+#include <errno.h>
+#include <time.h>
 #endif
 #include "types.h"
 #include "term.h"
@@ -593,20 +595,8 @@ void game_draw(void) {
         APPEND_FMT("\x1b[KPress Q to quit.\r\n");
     }
 
-    #ifdef _WIN32
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
-    #else
-    {
-        size_t toWrite = (size_t)(pos < cap ? pos : cap);
-        size_t written = 0;
-        while (written < toWrite) {
-            ssize_t w = write(STDOUT_FILENO, frame + written, toWrite - written);
-            if (w > 0) { written += (size_t)w; continue; }
-            break;
-        }
-    }
-    #endif
     #undef APPEND_FMT
 }
 
@@ -654,20 +644,8 @@ void game_draw_loading(int tick) {
         APPEND_FMT("\x1b[%d;%dH%s|%s", y + 1, MAP_WIDTH, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
     }
 
-    #ifdef _WIN32
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
-    #else
-    {
-        size_t toWrite = (size_t)(pos < cap ? pos : cap);
-        size_t written = 0;
-        while (written < toWrite) {
-            ssize_t w = write(STDOUT_FILENO, frame + written, toWrite - written);
-            if (w > 0) { written += (size_t)w; continue; }
-            break;
-        }
-    }
-    #endif
     #undef APPEND_FMT
 }
 
