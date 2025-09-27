@@ -6,6 +6,9 @@
 #include <ws2tcpip.h>
 typedef SOCKET net_socket_t;
 #else
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>

@@ -54,7 +54,16 @@ void term_exit_alt_screen(void) {
 void term_enable_raw_mode(void) {
     tcgetattr(STDIN_FILENO, &originalTermios);
     struct termios raw = originalTermios;
-    raw.c_lflag &= ~(ICANON | ECHO);
+    // Enter a robust raw mode:
+    // - Disable canonical mode and echo
+    // - Disable extended processing and signals (Ctrl-C/Z) to avoid interruptions
+    // - Disable XON/XOFF (Ctrl-S/Ctrl-Q) so output is not frozen on macOS zsh
+    // - Disable CR-to-NL translation and output post-processing
+    // - Ensure 8-bit chars
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= ~(OPOST);
+    raw.c_cflag |= (CS8);
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
