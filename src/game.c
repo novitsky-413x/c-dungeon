@@ -356,7 +356,7 @@ void game_draw(void) {
     int cap = (int)sizeof(frame);
     // Safe append macro: advances by actual written bytes; clamps on truncation
     #define APPEND_FMT(...) do { int __rem = cap - pos; if (__rem > 0) { int __w = snprintf(frame + pos, __rem, __VA_ARGS__); if (__w < 0) { /* ignore */ } else if (__w >= __rem) { pos = cap; } else { pos += __w; } } } while (0)
-    APPEND_FMT("\x1b[H");
+    APPEND_FMT("\x1b[r\x1b[2J\x1b[H");
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
             const char *color = TERM_FG_WHITE;
@@ -624,7 +624,7 @@ void game_draw_loading(int tick) {
     char frame[65536];
     int pos = 0; int cap = (int)sizeof(frame);
     #define APPEND_FMT(...) do { int __rem = cap - pos; if (__rem > 0) { int __w = snprintf(frame + pos, __rem, __VA_ARGS__); if (__w < 0) { /* ignore */ } else if (__w >= __rem) { pos = cap; } else { pos += __w; } } } while (0)
-    APPEND_FMT("\x1b[H");
+    APPEND_FMT("\x1b[r\x1b[2J\x1b[H");
     // Draw background with dim dots
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         for (int x = 0; x < MAP_WIDTH; ++x) {
