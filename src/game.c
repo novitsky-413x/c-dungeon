@@ -437,7 +437,7 @@ void game_draw(void) {
             APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
         // Clear to end of line to avoid leftover characters from previous screens
-        APPEND_FMT("\x1b[K\n");
+        APPEND_FMT("\x1b[K\r\n");
     }
     // Overlay remote players for this map (includes self in MP)
     if (g_mp_active) {
@@ -494,11 +494,11 @@ void game_draw(void) {
         if (g_my_player_id >= 0 && g_my_player_id < MAX_REMOTE_PLAYERS && g_remote_players[g_my_player_id].active) myhp = g_remote_players[g_my_player_id].hp;
         // HP and Ping directly under map
         extern int g_net_ping_ms;
-        if (g_net_ping_ms >= 0) APPEND_FMT("\x1b[KHP: %d   Ping: %d ms\n", myhp, g_net_ping_ms);
-        else APPEND_FMT("\x1b[KHP: %d   Ping: -- ms\n", myhp);
+        if (g_net_ping_ms >= 0) APPEND_FMT("\x1b[KHP: %d   Ping: %d ms\r\n", myhp, g_net_ping_ms);
+        else APPEND_FMT("\x1b[KHP: %d   Ping: -- ms\r\n", myhp);
     } else {
         // HP directly under map (score will be shown in the scoreboard)
-        APPEND_FMT("\x1b[KHP: %d\n", game_player_lives);
+        APPEND_FMT("\x1b[KHP: %d\r\n", game_player_lives);
     }
 
     // Scoreboard (left) and Minimap (right) on the same row
@@ -510,7 +510,7 @@ void game_draw(void) {
     int rightCol = leftCol + cols * cellW + gap; // place minimap to the right of the scoreboard
 
     // Titles on the same line
-    APPEND_FMT("\x1b[%d;%dH\x1b[KScoreboard\x1b[%d;%dH\x1b[KMinimap\n", baseRow, leftCol, baseRow, rightCol);
+    APPEND_FMT("\x1b[%d;%dH\x1b[KScoreboard\x1b[%d;%dH\x1b[KMinimap\r\n", baseRow, leftCol, baseRow, rightCol);
 
     // Render a 4x4 table of player slots, showing colored '@' and a simple score
     for (int r = 0; r < rows; ++r) {
@@ -582,15 +582,27 @@ void game_draw(void) {
 
     // Hints below both sections
     int hintsRow = miniRow + WORLD_H + 1;
-    APPEND_FMT("\x1b[%d;%dH\x1b[KUse WASD/Arrows to move, Space to shoot.\n", hintsRow, 1);
+    APPEND_FMT("\x1b[%d;%dH\x1b[KUse WASD/Arrows to move, Space to shoot.\r\n", hintsRow, 1);
     if (!g_mp_active) {
-        APPEND_FMT("\x1b[KFind purple W to win. Press Q to quit.\n");
+        APPEND_FMT("\x1b[KFind purple W to win. Press Q to quit.\r\n");
     } else {
-        APPEND_FMT("\x1b[KPress Q to quit.\n");
+        APPEND_FMT("\x1b[KPress Q to quit.\r\n");
     }
 
+    #ifdef _WIN32
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
+    #else
+    {
+        size_t toWrite = (size_t)(pos < cap ? pos : cap);
+        size_t written = 0;
+        while (written < toWrite) {
+            ssize_t w = write(STDOUT_FILENO, frame + written, toWrite - written);
+            if (w > 0) { written += (size_t)w; continue; }
+            break;
+        }
+    }
+    #endif
     #undef APPEND_FMT
 }
 
@@ -607,7 +619,7 @@ void game_draw_loading(int tick) {
             char out = '.';
             APPEND_FMT("%s%c%s", color, out, TERM_SGR_RESET);
         }
-        APPEND_FMT("\x1b[K\n");
+        APPEND_FMT("\x1b[K\r\n");
     }
     // Sparkles: pseudo-random deterministic per tick to avoid rand() here
     int sparkCount = 30; // number of sparkles per frame
@@ -638,8 +650,20 @@ void game_draw_loading(int tick) {
         APPEND_FMT("\x1b[%d;%dH%s|%s", y + 1, MAP_WIDTH, TERM_FG_BRIGHT_WHITE, TERM_SGR_RESET);
     }
 
+    #ifdef _WIN32
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
+    #else
+    {
+        size_t toWrite = (size_t)(pos < cap ? pos : cap);
+        size_t written = 0;
+        while (written < toWrite) {
+            ssize_t w = write(STDOUT_FILENO, frame + written, toWrite - written);
+            if (w > 0) { written += (size_t)w; continue; }
+            break;
+        }
+    }
+    #endif
     #undef APPEND_FMT
 }
 

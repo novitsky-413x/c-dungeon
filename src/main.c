@@ -43,7 +43,7 @@ static void handleInput(void) {
 
 static void print_menu(void) {
     term_clear_screen();
-    printf("Dungeon\n\n1) Singleplayer\n2) Multiplayer\nSelect [1/2]: ");
+    printf("Dungeon\r\n\r\n1) Singleplayer\r\n2) Multiplayer\r\nSelect [1/2]: ");
     fflush(stdout);
 }
 
@@ -98,7 +98,7 @@ int main(void) {
         if (client_connect(addr) == 0) {
             g_mp_active = 1;
         } else {
-            printf("\nFailed to connect. Starting singleplayer.\n");
+            printf("\r\nFailed to connect. Starting singleplayer.\r\n");
         }
     }
     // Clear menu before starting the game to avoid leftover lines in some shells (e.g., zsh on macOS)
@@ -164,8 +164,8 @@ int main(void) {
 #endif
     term_exit_alt_screen();
     term_show_cursor();
-    if (game_player_won) printf("You escaped the dungeon!\n"); else printf("You were caught by an enemy. Game Over.\n");
-    printf("Thanks for playing.\n");
+    if (game_player_won) printf("You escaped the dungeon!\r\n"); else printf("You were caught by an enemy. Game Over.\r\n");
+    printf("Thanks for playing.\r\n");
     return 0;
 }
 

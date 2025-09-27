@@ -62,11 +62,11 @@ void term_enable_raw_mode(void) {
     // - Disable canonical mode and echo
     // - Disable extended processing and signals (Ctrl-C/Z) to avoid interruptions
     // - Disable XON/XOFF (Ctrl-S/Ctrl-Q) so output is not frozen on macOS zsh
-    // - Keep output post-processing with ONLCR so '\n' maps to '\r\n' (prevents staircase text on macOS/zsh)
+    // - Disable output post-processing; the renderer will emit "\r\n" explicitly
     // - Ensure 8-bit chars
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-    raw.c_oflag |= (OPOST | ONLCR);
+    raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
