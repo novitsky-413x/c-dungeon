@@ -6,6 +6,7 @@
 #include <sys/types.h> // ssize_t
 #include <errno.h>
 #include <time.h>
+#include <termios.h>
 #endif
 #include "types.h"
 #include "term.h"
@@ -612,6 +613,9 @@ void game_draw(void) {
 
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
+#ifndef _WIN32
+    tcdrain(STDOUT_FILENO);
+#endif
     #undef APPEND_FMT
 }
 
@@ -661,6 +665,9 @@ void game_draw_loading(int tick) {
 
     fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
     fflush(stdout);
+#ifndef _WIN32
+    tcdrain(STDOUT_FILENO);
+#endif
     #undef APPEND_FMT
 }
 

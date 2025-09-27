@@ -26,6 +26,7 @@
 static int needsRedraw = 1;
 static int loadingStartTick = -1;
 static const int MIN_LOADING_TICKS = 30; // ~0.5s at ~60 FPS
+static int warmupFrames = 3; // draw a few initial frames to fully clear terminal
 
 static void handleInput(void) {
     int c = input_read_nonblocking();
@@ -128,14 +129,14 @@ int main(void) {
                 if (game_update_projectiles()) needsRedraw = 1;
                 if (game_tick_status()) needsRedraw = 1;
                 game_check_win_lose();
-                if (needsRedraw) { game_draw(); needsRedraw = 0; }
+                if (needsRedraw || warmupFrames > 0) { game_draw(); needsRedraw = 0; if (warmupFrames > 0) warmupFrames--; }
             }
         } else {
             if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
             if (game_update_projectiles()) needsRedraw = 1;
             if (game_tick_status()) needsRedraw = 1;
             game_check_win_lose();
-            if (needsRedraw) { game_draw(); needsRedraw = 0; }
+            if (needsRedraw || warmupFrames > 0) { game_draw(); needsRedraw = 0; if (warmupFrames > 0) warmupFrames--; }
         }
         const double targetFrameMs = 16.6667;
         double elapsed = now_ms() - frameStart;

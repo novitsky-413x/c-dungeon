@@ -45,13 +45,15 @@ void term_clear_screen(void) {
 
 void term_enter_alt_screen(void) {
     if (!ansi_inited) term_enable_ansi();
-    printf("\x1b[?1049h");
+    // Enter alternate screen, disable autowrap, ensure absolute origin mode
+    printf("\x1b[?1049h\x1b[?7l\x1b[?6l");
     fflush(stdout);
 }
 
 void term_exit_alt_screen(void) {
     if (!ansi_inited) term_enable_ansi();
-    printf("\x1b[?1049l");
+    // Restore autowrap and leave alternate screen
+    printf("\x1b[?7h\x1b[?1049l");
     fflush(stdout);
 }
 
