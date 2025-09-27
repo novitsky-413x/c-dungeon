@@ -27,6 +27,7 @@ void term_enable_ansi(void) {
 void term_hide_cursor(void) {
     if (!ansi_inited) term_enable_ansi();
     printf("\x1b[?25l");
+    fflush(stdout);
 }
 
 void term_show_cursor(void) {
@@ -38,16 +39,19 @@ void term_show_cursor(void) {
 void term_clear_screen(void) {
     if (!ansi_inited) term_enable_ansi();
     printf("\x1b[2J\x1b[H");
+    fflush(stdout);
 }
 
 void term_enter_alt_screen(void) {
     if (!ansi_inited) term_enable_ansi();
     printf("\x1b[?1049h");
+    fflush(stdout);
 }
 
 void term_exit_alt_screen(void) {
     if (!ansi_inited) term_enable_ansi();
     printf("\x1b[?1049l");
+    fflush(stdout);
 }
 
 #ifndef _WIN32
