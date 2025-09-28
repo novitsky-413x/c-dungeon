@@ -60,6 +60,12 @@ void client_send_input(int dx, int dy, int shoot) {
     net_send_all(g_sock, buf, n);
 }
 
+void client_send_raw(const char *s) {
+    if (g_sock < 0) return;
+    if (!s) return;
+    net_send_all(g_sock, s, (int)strlen(s));
+}
+
 int client_poll_messages(void) {
     int changed = 0;
     if (g_sock < 0) return 0;

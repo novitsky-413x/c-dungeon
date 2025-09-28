@@ -13,7 +13,7 @@
 // Interpolate between last and current snapshot for this many ticks
 #define REMOTE_INTERP_TICKS 3
 // Extrapolate one step beyond current in last movement direction up to this many ticks
-#define REMOTE_EXTRAP_TICKS 12
+#define REMOTE_EXTRAP_TICKS 3
 
 typedef struct {
     int x;

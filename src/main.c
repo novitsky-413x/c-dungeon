@@ -61,105 +61,40 @@ static void try_predict_step(int dx, int dy) {
 }
 
 static void handleInput(void) {
-    int c = input_read_nonblocking();
-    if (!c) return;
-    if (g_mp_active) {
-        extern int g_mp_joined;
-        if (!g_mp_joined) {
-            // Ignore inputs until we've fully joined and READY was received
-            return;
-        }
+    // Drain all inputs available this frame and combine into a single intent (supports diagonals)
+    int dx = 0, dy = 0; int shoot = 0; int build = 0; int gotAny = 0;
+    while (1) {
+        int c = input_read_nonblocking();
+        if (!c) break;
+        gotAny = 1;
+        if (c == 'w' || c == 'W') dy = -1;
+        else if (c == 's' || c == 'S') dy = 1;
+        else if (c == 'a' || c == 'A') dx = -1;
+        else if (c == 'd' || c == 'D') dx = 1;
+        else if (c == ' ') shoot = 1;
+        else if (c == 'b' || c == 'B') build = 1;
+        else if (c == 'q' || c == 'Q') { if (g_mp_active) client_send_bye(); game_running = 0; return; }
     }
-    switch (c) {
-        case 'w': case 'W':
-            if (g_mp_active) {
-                client_send_input(0, -1, 0);
-                g_lastFaceDx = 0; g_lastFaceDy = -1; g_predDx = 0; g_predDy = -1; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
-                // Predict one step if open and not occupied
-                int wx = game_mp_get_cur_world_x();
-                int wy = game_mp_get_cur_world_y();
-                // Keep same x, try y-1
-                extern RemotePlayer g_remote_players[]; extern int g_my_player_id;
-                if (g_my_player_id >= 0 && g_remote_players[g_my_player_id].active) {
-                    int x = g_remote_players[g_my_player_id].pos.x;
-                    int y = g_remote_players[g_my_player_id].pos.y - 1;
-                    int nwx = wx, nwy = wy, nx = x, ny = y;
-                    if (y < 0) { nwy = wy - 1; ny = MAP_HEIGHT - 1; }
-                    if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
-                            int occupied = 0;
-                            for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) {
-                                if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue;
-                                if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; }
-                            }
-                            if (!occupied) { g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX; g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY; g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos; g_remote_players[g_my_player_id].worldX = nwx; g_remote_players[g_my_player_id].worldY = nwy; g_remote_players[g_my_player_id].pos.x = nx; g_remote_players[g_my_player_id].pos.y = ny; extern int game_tick_count; g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count; needsRedraw = 1; }
-                    }
-                }
-            } else if (game_attempt_move_player(0, -1)) { needsRedraw = 1; }
-            break;
-        case 's': case 'S':
-            if (g_mp_active) {
-                client_send_input(0, 1, 0);
-                g_lastFaceDx = 0; g_lastFaceDy = 1; g_predDx = 0; g_predDy = 1; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
-                int wx = game_mp_get_cur_world_x();
-                int wy = game_mp_get_cur_world_y();
-                extern RemotePlayer g_remote_players[]; extern int g_my_player_id;
-                if (g_my_player_id >= 0 && g_remote_players[g_my_player_id].active) {
-                    int x = g_remote_players[g_my_player_id].pos.x;
-                    int y = g_remote_players[g_my_player_id].pos.y + 1;
-                    int nwx = wx, nwy = wy, nx = x, ny = y;
-                    if (y >= MAP_HEIGHT) { nwy = wy + 1; ny = 0; }
-                    if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
-                        int occupied = 0;
-                        for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) { if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue; if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; } }
-                        if (!occupied) { g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX; g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY; g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos; g_remote_players[g_my_player_id].worldX = nwx; g_remote_players[g_my_player_id].worldY = nwy; g_remote_players[g_my_player_id].pos.x = nx; g_remote_players[g_my_player_id].pos.y = ny; extern int game_tick_count; g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count; needsRedraw = 1; }
-                    }
-                }
-            } else if (game_attempt_move_player(0, 1))  { needsRedraw = 1; }
-            break;
-        case 'a': case 'A':
-            if (g_mp_active) {
-                client_send_input(-1, 0, 0);
-                g_lastFaceDx = -1; g_lastFaceDy = 0; g_predDx = -1; g_predDy = 0; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
-                int wx = game_mp_get_cur_world_x();
-                int wy = game_mp_get_cur_world_y();
-                extern RemotePlayer g_remote_players[]; extern int g_my_player_id;
-                if (g_my_player_id >= 0 && g_remote_players[g_my_player_id].active) {
-                    int x = g_remote_players[g_my_player_id].pos.x - 1;
-                    int y = g_remote_players[g_my_player_id].pos.y;
-                    int nwx = wx, nwy = wy, nx = x, ny = y;
-                    if (x < 0) { nwx = wx - 1; nx = MAP_WIDTH - 1; }
-                    if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
-                        int occupied = 0; for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) { if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue; if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; } }
-                        if (!occupied) { g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX; g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY; g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos; g_remote_players[g_my_player_id].worldX = nwx; g_remote_players[g_my_player_id].worldY = nwy; g_remote_players[g_my_player_id].pos.x = nx; g_remote_players[g_my_player_id].pos.y = ny; extern int game_tick_count; g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count; needsRedraw = 1; }
-                    }
-                }
-            } else if (game_attempt_move_player(-1, 0)) { needsRedraw = 1; }
-            break;
-        case 'd': case 'D':
-            if (g_mp_active) {
-                client_send_input(1, 0, 0);
-                g_lastFaceDx = 1; g_lastFaceDy = 0; g_predDx = 1; g_predDy = 0; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
-                int wx = game_mp_get_cur_world_x();
-                int wy = game_mp_get_cur_world_y();
-                extern RemotePlayer g_remote_players[]; extern int g_my_player_id;
-                if (g_my_player_id >= 0 && g_remote_players[g_my_player_id].active) {
-                    int x = g_remote_players[g_my_player_id].pos.x + 1;
-                    int y = g_remote_players[g_my_player_id].pos.y;
-                    int nwx = wx, nwy = wy, nx = x, ny = y;
-                    if (x >= MAP_WIDTH) { nwx = wx + 1; nx = 0; }
-                    if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
-                        int occupied = 0; for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) { if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue; if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; } }
-                        if (!occupied) { g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX; g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY; g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos; g_remote_players[g_my_player_id].worldX = nwx; g_remote_players[g_my_player_id].worldY = nwy; g_remote_players[g_my_player_id].pos.x = nx; g_remote_players[g_my_player_id].pos.y = ny; extern int game_tick_count; g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count; needsRedraw = 1; }
-                    }
-                }
-            } else if (game_attempt_move_player(1, 0))  { needsRedraw = 1; }
-            break;
-        case ' ':
-            if (g_mp_active) { client_send_input(g_predDx, g_predDy, 1); game_mp_spawn_predicted_bullet(g_lastFaceDx, g_lastFaceDy); needsRedraw = 1; }
-            else { game_player_shoot(); needsRedraw = 1; }
-            break;
-        case 'q': case 'Q': if (g_mp_active) client_send_bye(); game_running = 0; break;
-        default: break;
+    if (!gotAny) return;
+
+    if (g_mp_active) {
+        extern int g_mp_joined; if (!g_mp_joined) return;
+        // Update facing if any movement this frame
+        if (dx < 0) { g_lastFaceDx = -1; g_lastFaceDy = 0; }
+        else if (dx > 0) { g_lastFaceDx = 1; g_lastFaceDy = 0; }
+        else if (dy < 0) { g_lastFaceDx = 0; g_lastFaceDy = -1; }
+        else if (dy > 0) { g_lastFaceDx = 0; g_lastFaceDy = 1; }
+
+        client_send_input(dx, dy, shoot ? 1 : 0);
+        g_predDx = dx; g_predDy = dy; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
+        if (shoot) { game_mp_spawn_predicted_bullet(g_lastFaceDx, g_lastFaceDy); }
+        if (build) { extern void client_send_raw(const char *s); client_send_raw("BUILD\n"); }
+        needsRedraw = 1;
+    } else {
+        // Singleplayer
+        if (dx != 0 || dy != 0) { if (game_attempt_move_player(dx, dy)) needsRedraw = 1; }
+        if (shoot) { game_player_shoot(); needsRedraw = 1; }
+        if (build) { extern void game_build_wall_ahead(void); game_build_wall_ahead(); needsRedraw = 1; }
     }
 }
 

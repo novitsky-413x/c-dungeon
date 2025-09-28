@@ -37,6 +37,8 @@
 
         .shoot { position: fixed; right: 16px; bottom: 36px; width: 84px; height: 84px; background: rgba(18, 23, 34, 0.6); border: 1px solid #2b3342; border-radius: 50%; }
         .shoot.active { background: rgba(34, 197, 94, 0.6); border-color: #22c55e; }
+        .build { position: fixed; right: 116px; bottom: 48px; width: 64px; height: 64px; background: rgba(18, 23, 34, 0.6); border: 1px solid #2b3342; border-radius: 12px; }
+        .build.active { background: rgba(249, 115, 22, 0.6); border-color: #f97316; }
 
         /* Respect iOS safe areas */
         @supports (padding: env(safe-area-inset-bottom)) {
@@ -67,6 +69,7 @@
         <button id="btnDown" class="touch-btn down" aria-label="Down"></button>
     </div>
     <button id="btnShoot" class="touch shoot" aria-label="Shoot"></button>
+    <button id="btnBuild" class="touch build" aria-label="Build"></button>
     
     <!-- Prevent default context menu on long-press -->
     <script>
@@ -109,6 +112,8 @@
     const btnLeft = document.getElementById("btnLeft");
     const btnRight = document.getElementById("btnRight");
     const btnShoot = document.getElementById("btnShoot");
+    const btnBuild = document.getElementById("btnBuild");
+    let lastBuildFlashAt = 0;
 
     let socket = null;
     let youId = -1;
@@ -710,6 +715,7 @@
         const hpText = (!me || !initialMapLoaded) ? "Loading..." : ("HP: " + me.hp);
         const pingText = "Ping: " + (pingMs >= 0 ? (pingMs + " ms") : "-- ms");
         ctx.fillText(hpText + "   " + pingText, 8, hudY);
+        if (performance.now() - lastBuildFlashAt < 150) { ctx.fillStyle = "#f97316"; ctx.fillText("Built #", 200, hudY); }
 
         // Titles and layout
         const titleY = hudY + TILE_SIZE;
@@ -828,6 +834,7 @@
     window.addEventListener("keydown", (e) => {
         if (e.key === "q" || e.key === "Q") { disconnect(); return; }
         if (e.key === " ") e.preventDefault();
+        if (e.key === "b" || e.key === "B") { e.preventDefault(); if (socket && socket.readyState === 1) { sendLine("BUILD"); lastBuildFlashAt = performance.now(); } return; }
         keyState.add(e.key);
         const inp = computeInput();
         if (!socket || socket.readyState !== 1) return;
@@ -868,11 +875,21 @@
         if (!touchControlsEl) return;
         touchControlsEl.style.display = "block";
         document.body.classList.add("is-mobile");
+        // Reduce iOS Safari copy/select popups during long press
+        try {
+            const style = document.createElement('style');
+            style.textContent = `
+                #touchControls, #touchControls * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+            `;
+            document.head.appendChild(style);
+        } catch {}
         bindButton(btnLeft, () => { touchState.left = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.left = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
         bindButton(btnRight, () => { touchState.right = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.right = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
         bindButton(btnUp, () => { touchState.up = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.up = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
         bindButton(btnDown, () => { touchState.down = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.down = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
         bindButton(btnShoot, () => { touchState.shoot = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.shoot = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
+        bindButton(btnBuild, () => { if (socket && socket.readyState===1) { sendLine("BUILD"); lastBuildFlashAt = performance.now(); } }, () => {});
+        // Removed double-tap to build in favor of a dedicated Build button
     }
     if (isMobileClient()) { setupTouchControls(); }
 

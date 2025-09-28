@@ -307,6 +307,19 @@ static void damage_wall(int x, int y) {
     else { curMap->tiles[y][x] = '.'; curMap->wallDmg[y][x] = 0; }
 }
 
+void game_build_wall_ahead(void) {
+    // Build a wall '#' in front of the player if the cell is empty '.' and unoccupied
+    int fdx = 0, fdy = 0;
+    switch (playerFacing) { case DIR_LEFT: fdx = -1; break; case DIR_RIGHT: fdx = 1; break; case DIR_UP: fdy = -1; break; case DIR_DOWN: fdy = 1; break; }
+    int tx = playerPos.x + fdx;
+    int ty = playerPos.y + fdy;
+    if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) return;
+    if (curMap->tiles[ty][tx] != '.') return;
+    if (game_is_enemy_at(tx, ty)) return;
+    curMap->tiles[ty][tx] = '#';
+    curMap->wallDmg[ty][tx] = 0;
+}
+
 void game_player_shoot(void) {
     if (g_mp_active) return; // client doesn't fire locally in MP
     if (super_frames <= 0 && shoot_cooldown_frames > 0) return;

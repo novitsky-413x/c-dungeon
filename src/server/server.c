@@ -1253,6 +1253,41 @@ int main(int argc, char **argv) {
                             if (slot >= 0) { bullets[slot].active = 1; bullets[slot].worldX = clients[i].worldX; bullets[slot].worldY = clients[i].worldY; bullets[slot].pos = clients[i].pos; bullets[slot].dir = dir; bullets[slot].ownerId = i; }
                         }
                     }
+                } else if (strncmp(p, "BUILD", 5) == 0) {
+                    // Player requests to build a wall in front of them
+                    clients[i].lastActive = time(NULL);
+                    int wx = clients[i].worldX;
+                    int wy = clients[i].worldY;
+                    int x = clients[i].pos.x;
+                    int y = clients[i].pos.y;
+                    int fdx = 0, fdy = 0;
+                    switch (clients[i].facing) {
+                        case DIR_LEFT: fdx = -1; break; case DIR_RIGHT: fdx = 1; break; case DIR_UP: fdy = -1; break; case DIR_DOWN: fdy = 1; break;
+                    }
+                    int tx = x + fdx;
+                    int ty = y + fdy;
+                    if (tx >= 0 && tx < MAP_WIDTH && ty >= 0 && ty < MAP_HEIGHT) {
+                        Map *m = &world[wy][wx];
+                        char cur = m->tiles[ty][tx];
+                        if (cur == '.') {
+                            // avoid building on players or enemies
+                            int occupied = 0;
+                            for (int pj = 0; pj < MAX_CLIENTS; ++pj) {
+                                if (!clients[pj].connected) continue;
+                                if (clients[pj].worldX == wx && clients[pj].worldY == wy && clients[pj].pos.x == tx && clients[pj].pos.y == ty) { occupied = 1; break; }
+                            }
+                            if (!occupied) {
+                                for (int ei = 0; ei < MAX_ENEMIES && !occupied; ++ei) {
+                                    if (enemies[wy][wx][ei].active && enemies[wy][wx][ei].pos.x == tx && enemies[wy][wx][ei].pos.y == ty) { occupied = 1; }
+                                }
+                            }
+                            if (!occupied) {
+                                m->tiles[ty][tx] = '#';
+                                m->wallDmg[ty][tx] = 0;
+                                broadcast_tile(wx, wy, tx, ty, '#');
+                            }
+                        }
+                    }
                 }
 parsed_continue:
                 if (!eol) break; p = eol + 1;
