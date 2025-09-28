@@ -410,13 +410,13 @@
             if (wy>=0 && wy<WORLD_H && wx>=0 && wx<WORLD_W) {
                 const midX = Math.floor(MAP_WIDTH/2), midY = Math.floor(MAP_HEIGHT/2);
                 // Left entrance at (0, midY)
-                if (bl === 1) worldTiles[wy][wx][midY][0] = ':'; else if (worldTiles[wy][wx][midY][0] === ':') worldTiles[wy][wx][midY][0] = '.';
+                if (wx > 0) { if (bl === 1) worldTiles[wy][wx][midY][0] = ':'; else if (worldTiles[wy][wx][midY][0] === ':') worldTiles[wy][wx][midY][0] = '.'; }
                 // Right entrance at (MAP_WIDTH-1, midY)
-                if (br === 1) worldTiles[wy][wx][midY][MAP_WIDTH-1] = ':'; else if (worldTiles[wy][wx][midY][MAP_WIDTH-1] === ':') worldTiles[wy][wx][midY][MAP_WIDTH-1] = '.';
+                if (wx < WORLD_W - 1) { if (br === 1) worldTiles[wy][wx][midY][MAP_WIDTH-1] = ':'; else if (worldTiles[wy][wx][midY][MAP_WIDTH-1] === ':') worldTiles[wy][wx][midY][MAP_WIDTH-1] = '.'; }
                 // Up entrance at (midX, 0)
-                if (bu === 1) worldTiles[wy][wx][0][midX] = ':'; else if (worldTiles[wy][wx][0][midX] === ':') worldTiles[wy][wx][0][midX] = '.';
+                if (wy > 0) { if (bu === 1) worldTiles[wy][wx][0][midX] = ':'; else if (worldTiles[wy][wx][0][midX] === ':') worldTiles[wy][wx][0][midX] = '.'; }
                 // Down entrance at (midX, MAP_HEIGHT-1)
-                if (bd === 1) worldTiles[wy][wx][MAP_HEIGHT-1][midX] = ':'; else if (worldTiles[wy][wx][MAP_HEIGHT-1][midX] === ':') worldTiles[wy][wx][MAP_HEIGHT-1][midX] = '.';
+                if (wy < WORLD_H - 1) { if (bd === 1) worldTiles[wy][wx][MAP_HEIGHT-1][midX] = ':'; else if (worldTiles[wy][wx][MAP_HEIGHT-1][midX] === ':') worldTiles[wy][wx][MAP_HEIGHT-1][midX] = '.'; }
             }
             return;
         }
@@ -480,11 +480,11 @@
             let wx = p.wx, wy = p.wy, x = p.x, y = p.y;
             let nx = x + inp.dx, ny = y + inp.dy;
             let nwx = wx, nwy = wy;
-            // handle world crossings similar to server logic
-            if (nx < 0) { if (wx > 0 && worldTiles[wy][wx - 1][y][MAP_WIDTH - 1] !== '#') { nwx = wx - 1; nx = MAP_WIDTH - 1; ny = y; } }
-            else if (nx >= MAP_WIDTH) { if (wx < WORLD_W - 1 && worldTiles[wy][wx + 1][y][0] !== '#') { nwx = wx + 1; nx = 0; ny = y; } }
-            else if (ny < 0) { if (wy > 0 && worldTiles[wy - 1][wx][MAP_HEIGHT - 1][x] !== '#') { nwy = wy - 1; ny = MAP_HEIGHT - 1; nx = x; } }
-            else if (ny >= MAP_HEIGHT) { if (wy < WORLD_H - 1 && worldTiles[wy + 1][wx][0][x] !== '#') { nwy = wy + 1; ny = 0; nx = x; } }
+            // handle world crossings similar to server logic; require the exact entry cell in next map to be open
+            if (nx < 0) { if (wx > 0 && worldTiles[wy][wx - 1][y] && worldTiles[wy][wx - 1][y][MAP_WIDTH - 1] !== '#') { nwx = wx - 1; nx = MAP_WIDTH - 1; ny = y; } else return; }
+            else if (nx >= MAP_WIDTH) { if (wx < WORLD_W - 1 && worldTiles[wy][wx + 1][y] && worldTiles[wy][wx + 1][y][0] !== '#') { nwx = wx + 1; nx = 0; ny = y; } else return; }
+            else if (ny < 0) { if (wy > 0 && worldTiles[wy - 1][wx][MAP_HEIGHT - 1] && worldTiles[wy - 1][wx][MAP_HEIGHT - 1][x] !== '#') { nwy = wy - 1; ny = MAP_HEIGHT - 1; nx = x; } else return; }
+            else if (ny >= MAP_HEIGHT) { if (wy < WORLD_H - 1 && worldTiles[wy + 1][wx][0] && worldTiles[wy + 1][wx][0][x] !== '#') { nwy = wy + 1; ny = 0; nx = x; } else return; }
             // If staying in map, ensure target not blocked
             const inSame = (nwx === wx && nwy === wy);
             if (inSame) {
@@ -598,6 +598,7 @@
                 if (ch === '#') { glyph = '#'; color = "#ffffff"; }
                 else if (ch === '.') { glyph = '.'; color = "#6b7280"; }
                 else if (ch === ':') { glyph = '.'; color = "#ffffff"; }
+                else if (ch === 'M') { glyph = 'M'; color = "#22c55e"; }
                 else if (ch === 'X') { glyph = 'X'; color = "#facc15"; }
                 else if (ch === 'W') { glyph = 'W'; color = "#d946ef"; }
                 else if (ch === '@') { glyph = '.'; color = "#6b7280"; }
@@ -611,6 +612,8 @@
             if (e.wx !== wx || e.wy !== wy) continue;
             const px = e.x * TILE_SIZE;
             const py = e.y * TILE_SIZE;
+            // Hide enemies inside bushes
+            if (worldTiles[wy][wx][e.y] && worldTiles[wy][wx][e.y][e.x] === 'M') continue;
             ctx.fillStyle = "#ef4444";
             ctx.fillText('E', px + 1, py + 1);
         }
@@ -689,7 +692,7 @@
             if (flicker && isYou) continue;
             // Hide remote players when standing on a bush tile ('M')
             const under = worldTiles[wy][wx][ry] && worldTiles[wy][wx][ry][rx];
-            if (!isYou && under === 'M') continue;
+            if (under === 'M') continue;
             ctx.fillStyle = colorFromIndex(p.color);
             ctx.fillText('@', px + 1, py + 1);
         }

@@ -500,14 +500,17 @@ void game_draw(void) {
                         }
                     }
                 }
-                // Remote enemies overlay on base tiles when in MP
+                // Remote enemies overlay on base tiles when in MP (hidden in bushes)
                 if (!drew && g_mp_active) {
-                    for (int ei = 0; ei < MAX_REMOTE_ENEMIES; ++ei) {
-                        if (g_remote_enemies[ei].active && g_remote_enemies[ei].worldX == curWorldX && g_remote_enemies[ei].worldY == curWorldY && g_remote_enemies[ei].pos.x == x && g_remote_enemies[ei].pos.y == y) {
-                            out = 'E';
-                            color = TERM_FG_BRIGHT_RED;
-                            drew = 1;
-                            break;
+                    int isBush = (curMap->tiles[y][x] == 'M');
+                    if (!isBush) {
+                        for (int ei = 0; ei < MAX_REMOTE_ENEMIES; ++ei) {
+                            if (g_remote_enemies[ei].active && g_remote_enemies[ei].worldX == curWorldX && g_remote_enemies[ei].worldY == curWorldY && g_remote_enemies[ei].pos.x == x && g_remote_enemies[ei].pos.y == y) {
+                                out = 'E';
+                                color = TERM_FG_BRIGHT_RED;
+                                drew = 1;
+                                break;
+                            }
                         }
                     }
                 }
@@ -517,7 +520,11 @@ void game_draw(void) {
             else if (c == '.') {
                         // Highlight blocked entrances as bright white dots ':' character
                         int midX = MAP_WIDTH / 2; int midY = MAP_HEIGHT / 2;
-                        int isEntrance = ((x == 0 && y == midY) || (x == MAP_WIDTH - 1 && y == midY) || (y == 0 && x == midX) || (y == MAP_HEIGHT - 1 && x == midX));
+                        int isEntrance = 0;
+                        if (x == 0 && y == midY && curWorldX > 0) isEntrance = 1;
+                        if (x == MAP_WIDTH - 1 && y == midY && curWorldX < WORLD_W - 1) isEntrance = 1;
+                        if (y == 0 && x == midX && curWorldY > 0) isEntrance = 1;
+                        if (y == MAP_HEIGHT - 1 && x == midX && curWorldY < WORLD_H - 1) isEntrance = 1;
                         if (isEntrance) {
                             int blocked = 1;
                             if (x == 0 && y == midY && curWorldX > 0) blocked = (world[curWorldY][curWorldX-1].tiles[midY][MAP_WIDTH-1] == '#');
@@ -576,6 +583,9 @@ void game_draw(void) {
                     }
                 }
                 if (rx >= 0 && rx < MAP_WIDTH && ry >= 0 && ry < MAP_HEIGHT) {
+                    // Hide remote players under bushes, and also hide local self if on bush
+                    int isBush = (curMap->tiles[ry][rx] == 'M');
+                    (void)isBush;
                     const char *pcolor = TERM_FG_BRIGHT_BLUE;
                     switch (g_remote_players[i].colorIndex % 6) {
                         case 0: pcolor = TERM_FG_BRIGHT_BLUE; break;
@@ -585,7 +595,10 @@ void game_draw(void) {
                         case 4: pcolor = TERM_FG_BRIGHT_YELLOW; break;
                         case 5: pcolor = TERM_FG_BRIGHT_RED; break;
                     }
-                    APPEND_FMT("\x1b[%d;%dH%s@%s", ry + 1, rx + 1, pcolor, TERM_SGR_RESET);
+                    // If bush tile, skip drawing
+                    if (!(curMap->tiles[ry][rx] == 'M')) {
+                        APPEND_FMT("\x1b[%d;%dH%s@%s", ry + 1, rx + 1, pcolor, TERM_SGR_RESET);
+                    }
                 }
             }
         }

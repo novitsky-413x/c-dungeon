@@ -155,7 +155,7 @@ static void handleInput(void) {
             } else if (game_attempt_move_player(1, 0))  { needsRedraw = 1; }
             break;
         case ' ':
-            if (g_mp_active) { client_send_input(0, 0, 1); game_mp_spawn_predicted_bullet(g_lastFaceDx, g_lastFaceDy); needsRedraw = 1; }
+            if (g_mp_active) { client_send_input(g_predDx, g_predDy, 1); game_mp_spawn_predicted_bullet(g_lastFaceDx, g_lastFaceDy); needsRedraw = 1; }
             else { game_player_shoot(); needsRedraw = 1; }
             break;
         case 'q': case 'Q': if (g_mp_active) client_send_bye(); game_running = 0; break;

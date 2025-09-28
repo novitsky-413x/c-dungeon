@@ -413,13 +413,9 @@ static void load_map_file(int mx, int my) {
     }
     fclose(f);
     memset(m->wallDmg, 0, sizeof(m->wallDmg));
-    // Ensure inter-map connectivity on interior edges
+    // Preserve map-defined entrance openness; do not force interior edges open
     int midX = MAP_WIDTH / 2;
     int midY = MAP_HEIGHT / 2;
-    if (mx > 0) m->tiles[midY][0] = '.';
-    if (mx < WORLD_W - 1) m->tiles[midY][MAP_WIDTH - 1] = '.';
-    if (my > 0) m->tiles[0][midX] = '.';
-    if (my < WORLD_H - 1) m->tiles[MAP_HEIGHT - 1][midX] = '.';
     // Ensure a central spawn exists at world center if none provided by files
     if (mx == WORLD_W / 2 && my == WORLD_H / 2) {
         int hasS = 0;
