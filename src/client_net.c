@@ -162,8 +162,9 @@ int client_poll_messages(void) {
                 changed = 1;
             }
         } else if (strncmp(line, "BULLET ", 7) == 0) {
-            int wx, wy, x, y, active;
-            if (sscanf(line + 7, "%d %d %d %d %d", &wx, &wy, &x, &y, &active) == 5) {
+            int wx, wy, x, y, active, owner;
+            int parsed = sscanf(line + 7, "%d %d %d %d %d %d", &wx, &wy, &x, &y, &active, &owner);
+            if (parsed == 5 || parsed == 6) {
                 int slot = -1;
                 for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) {
                     if (g_remote_bullets[i].active && g_remote_bullets[i].worldX == wx && g_remote_bullets[i].worldY == wy && g_remote_bullets[i].pos.x == x && g_remote_bullets[i].pos.y == y) { slot = i; break; }
@@ -190,6 +191,7 @@ int client_poll_messages(void) {
                     g_remote_bullets[slot].worldY = wy;
                     g_remote_bullets[slot].pos.x = x;
                     g_remote_bullets[slot].pos.y = y;
+                    if (parsed == 6) g_remote_bullets[slot].ownerId = owner; else g_remote_bullets[slot].ownerId = -1;
                     extern int game_tick_count; g_remote_bullets[slot].lastUpdateTick = game_tick_count;
                     changed = 1;
                 }

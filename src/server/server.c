@@ -548,12 +548,12 @@ static void broadcast_state(void) {
             clients[i].lastSentColor = clients[i].color;
         }
     }
-    // broadcast bullets
+    // broadcast bullets (include owner id)
     for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
         if (!bullets[b].active) continue;
         // Only broadcast bullets on maps that currently have players
         if (!is_map_active(bullets[b].worldX, bullets[b].worldY)) continue;
-        int n = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
+        int n = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1, bullets[b].ownerId);
         if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
     }
     // broadcast enemies
@@ -803,7 +803,7 @@ int main(int argc, char **argv) {
                     }
                     for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
                         if (!bullets[b].active) continue;
-                        int bn = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
+                        int bn = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1, bullets[b].ownerId);
                         if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
                     }
                     send_text_to_client(idx, buf, off);
@@ -911,7 +911,7 @@ int main(int argc, char **argv) {
                             }
                             for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
                                 if (!bullets[b].active) continue;
-                                int bn = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
+                                int bn = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1, bullets[b].ownerId);
                                 if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
                             }
                             send_text_to_client(idx, buf, off);

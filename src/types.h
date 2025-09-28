@@ -61,6 +61,7 @@ typedef struct {
     int worldX;
     int worldY;
     Vec2 pos;
+    int ownerId;
     // smoothing
     Vec2 lastPos;
     int lastWorldX;
