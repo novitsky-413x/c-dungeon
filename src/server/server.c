@@ -398,6 +398,43 @@ static void send_map_to(int clientIdx, int wx, int wy) {
     }
 }
 
+static void broadcast_entr(int wx, int wy) {
+    if (wx < 0 || wx >= WORLD_W || wy < 0 || wy >= WORLD_H) return;
+    int midX = MAP_WIDTH / 2;
+    int midY = MAP_HEIGHT / 2;
+    int bl = 0, br = 0, bu = 0, bd = 0;
+    if (wx > 0) bl = (world[wy][wx - 1].tiles[midY][MAP_WIDTH - 1] == '#') ? 1 : 0;
+    if (wx < WORLD_W - 1) br = (world[wy][wx + 1].tiles[midY][0] == '#') ? 1 : 0;
+    if (wy > 0) bu = (world[wy - 1][wx].tiles[MAP_HEIGHT - 1][midX] == '#') ? 1 : 0;
+    if (wy < WORLD_H - 1) bd = (world[wy + 1][wx].tiles[0][midX] == '#') ? 1 : 0;
+    char line[64];
+    int n = snprintf(line, sizeof(line), "ENTR %d %d %d %d %d %d\n", wx, wy, bl, br, bu, bd);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (!clients[i].connected) continue;
+        if (clients[i].isWebSocket && !clients[i].wsHandshakeDone) continue;
+        send_text_to_client(i, line, n);
+    }
+}
+
+static void maybe_broadcast_entr_due_to_tile_change(int wx, int wy, int x, int y) {
+    int midX = MAP_WIDTH / 2;
+    int midY = MAP_HEIGHT / 2;
+    // If a border-center tile changed in this map, update the neighbor's ENTR status
+    if (x == 0 && y == midY) {
+        // This is left edge center of (wx,wy) -> affects right entrance of neighbor to the left (wx-1,wy)
+        if (wx > 0) broadcast_entr(wx - 1, wy);
+    } else if (x == MAP_WIDTH - 1 && y == midY) {
+        // Right edge center -> affects left entrance of neighbor to the right
+        if (wx < WORLD_W - 1) broadcast_entr(wx + 1, wy);
+    } else if (y == 0 && x == midX) {
+        // Top edge center -> affects bottom entrance of neighbor above
+        if (wy > 0) broadcast_entr(wx, wy - 1);
+    } else if (y == MAP_HEIGHT - 1 && x == midX) {
+        // Bottom edge center -> affects top entrance of neighbor below
+        if (wy < WORLD_H - 1) broadcast_entr(wx, wy + 1);
+    }
+}
+
 static FILE *try_open_map(const char *prefix, int mx, int my) {
     char path[256]; snprintf(path, sizeof(path), "%smaps/x%d-y%d.txt", prefix, mx, my);
     return fopen(path, "rb");
@@ -629,6 +666,8 @@ static void broadcast_tile(int wx, int wy, int x, int y, char ch) {
         if (clients[i].isWebSocket) ws_send_text_frame(clients[i].sock, line, n);
         else send(clients[i].sock, line, n, 0);
     }
+    // If this tile change affects an entrance status for a neighbor map, broadcast ENTR for that neighbor now
+    maybe_broadcast_entr_due_to_tile_change(wx, wy, x, y);
 }
 
 static void step_bullets(void) {
