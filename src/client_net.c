@@ -17,6 +17,8 @@ static int g_recv_len = 0;
 static double g_last_ping_ms = 0.0;
 
 extern int g_net_ping_ms; // from mp.c
+extern int g_mp_joined;   // from mp.c
+static int g_ready_received = 0;
 
 static void parse_host_port(const char *in, char *host, size_t hostcap, char *port, size_t portcap) {
     const char *colon = strrchr(in, ':');
@@ -117,6 +119,9 @@ int client_poll_messages(void) {
         if (strncmp(line, "YOU ", 4) == 0) {
             g_my_player_id = atoi(line + 4);
             changed = 1;
+        } else if (strcmp(line, "READY") == 0) {
+            g_ready_received = 1;
+            changed = 1;
         } else if (strncmp(line, "PLAYER ", 7) == 0) {
             int id, wx, wy, x, y, color, active, hp, inv, sup, score;
             int parsed = sscanf(line + 7, "%d %d %d %d %d %d %d %d %d %d %d", &id, &wx, &wy, &x, &y, &color, &active, &hp, &inv, &sup, &score);
@@ -140,8 +145,8 @@ int client_poll_messages(void) {
                         if (parsed >= 11) g_remote_players[id].score = score; else g_remote_players[id].score = 0;
                         if (id == g_my_player_id) {
                             game_mp_set_self(wx, wy, x, y);
-                            // We've received our first authoritative snapshot
-                            extern int g_mp_joined; g_mp_joined = 1;
+                            // Set joined only when READY already received to ensure tiles are drawn
+                            if (g_ready_received) { g_mp_joined = 1; }
                         }
                         changed = 1;
                     }

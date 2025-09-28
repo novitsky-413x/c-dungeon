@@ -31,6 +31,13 @@ static int warmupFrames = 3; // draw a few initial frames to fully clear termina
 static void handleInput(void) {
     int c = input_read_nonblocking();
     if (!c) return;
+    if (g_mp_active) {
+        extern int g_mp_joined;
+        if (!g_mp_joined) {
+            // Ignore inputs until we've fully joined and READY was received
+            return;
+        }
+    }
     switch (c) {
         case 'w': case 'W': if (g_mp_active) { client_send_input(0, -1, 0); needsRedraw = 1; } else if (game_attempt_move_player(0, -1)) { needsRedraw = 1; } break;
         case 's': case 'S': if (g_mp_active) { client_send_input(0, 1, 0); needsRedraw = 1; } else if (game_attempt_move_player(0, 1))  { needsRedraw = 1; } break;

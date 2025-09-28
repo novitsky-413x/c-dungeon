@@ -769,8 +769,13 @@ int main(int argc, char **argv) {
                         if (off + bn < (int)sizeof(buf)) { memcpy(buf + off, line, bn); off += bn; }
                     }
                     send_text_to_client(idx, buf, off);
-                    // send full map snapshot to ensure client renders current walls/tiles
-                    send_full_map_to(idx);
+                    // send only the current map snapshot to reduce initial burst
+                    send_map_to(idx, clients[idx].worldX, clients[idx].worldY);
+                    // signal client it can start accepting input/rendering
+                    {
+                        const char *ready = "READY\n";
+                        send_text_to_client(idx, ready, (int)strlen(ready));
+                    }
                 } else {
                     const char *full = "FULL\n"; send(cs, full, (int)strlen(full), 0);
 #ifdef _WIN32
@@ -874,6 +879,11 @@ int main(int argc, char **argv) {
                             send_text_to_client(idx, buf, off);
                     // now send only the current map snapshot (for WS clients)
                     send_map_to(idx, clients[idx].worldX, clients[idx].worldY);
+                    // and signal READY
+                    {
+                        const char *ready = "READY\n";
+                        send_text_to_client(idx, ready, (int)strlen(ready));
+                    }
                         }
                     }
                 } else {
@@ -926,13 +936,17 @@ int main(int argc, char **argv) {
 #endif
                     clients[i].sock = 0;
                 } else if (hs > 0) {
-                    // complete: now send YOU and full map
+                    // complete: now send YOU and current map only, then READY
                     place_near_spawn(&clients[i]);
                     clients[i].facing = DIR_RIGHT; clients[i].hp = 3; clients[i].invincibleTicks=0; clients[i].superTicks=0; clients[i].shootCooldown=0; clients[i].score=0; clients[i].lastActive=time(NULL);
                     clients[i].tokens=10; clients[i].maxTokens=20; clients[i].refillTicks=2; clients[i].refillAmount=1; clients[i].tickSinceRefill=0;
                     char you[32]; int yn = snprintf(you, sizeof(you), "YOU %d\n", i);
                     send_text_to_client(i, you, yn);
-                    send_full_map_to(i);
+                    send_map_to(i, clients[i].worldX, clients[i].worldY);
+                    {
+                        const char *ready = "READY\n";
+                        send_text_to_client(i, ready, (int)strlen(ready));
+                    }
                 }
                 continue;
             }
