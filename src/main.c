@@ -50,17 +50,15 @@ static void handleInput(void) {
                 if (g_my_player_id >= 0 && g_remote_players[g_my_player_id].active) {
                     int x = g_remote_players[g_my_player_id].pos.x;
                     int y = g_remote_players[g_my_player_id].pos.y - 1;
-                    if (y >= 0 || (wy > 0 && game_mp_is_open_world(wx, wy-1, x, MAP_HEIGHT-1))) {
-                        int nwx = wx, nwy = wy, nx = x, ny = y;
-                        if (y < 0) { nwy = wy - 1; ny = MAP_HEIGHT - 1; }
-                        if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
+                    int nwx = wx, nwy = wy, nx = x, ny = y;
+                    if (y < 0) { nwy = wy - 1; ny = MAP_HEIGHT - 1; }
+                    if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
                             int occupied = 0;
                             for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) {
                                 if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue;
                                 if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; }
                             }
                             if (!occupied) { g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX; g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY; g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos; g_remote_players[g_my_player_id].worldX = nwx; g_remote_players[g_my_player_id].worldY = nwy; g_remote_players[g_my_player_id].pos.x = nx; g_remote_players[g_my_player_id].pos.y = ny; extern int game_tick_count; g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count; needsRedraw = 1; }
-                        }
                     }
                 }
             } else if (game_attempt_move_player(0, -1)) { needsRedraw = 1; }
@@ -75,7 +73,7 @@ static void handleInput(void) {
                     int x = g_remote_players[g_my_player_id].pos.x;
                     int y = g_remote_players[g_my_player_id].pos.y + 1;
                     int nwx = wx, nwy = wy, nx = x, ny = y;
-                    if (y >= MAP_HEIGHT && wy < WORLD_H - 1) { nwy = wy + 1; ny = 0; }
+                    if (y >= MAP_HEIGHT) { nwy = wy + 1; ny = 0; }
                     if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
                         int occupied = 0;
                         for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) { if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue; if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; } }
@@ -94,7 +92,7 @@ static void handleInput(void) {
                     int x = g_remote_players[g_my_player_id].pos.x - 1;
                     int y = g_remote_players[g_my_player_id].pos.y;
                     int nwx = wx, nwy = wy, nx = x, ny = y;
-                    if (x < 0 && wx > 0) { nwx = wx - 1; nx = MAP_WIDTH - 1; }
+                    if (x < 0) { nwx = wx - 1; nx = MAP_WIDTH - 1; }
                     if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
                         int occupied = 0; for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) { if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue; if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; } }
                         if (!occupied) { g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX; g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY; g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos; g_remote_players[g_my_player_id].worldX = nwx; g_remote_players[g_my_player_id].worldY = nwy; g_remote_players[g_my_player_id].pos.x = nx; g_remote_players[g_my_player_id].pos.y = ny; extern int game_tick_count; g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count; needsRedraw = 1; }
@@ -112,7 +110,7 @@ static void handleInput(void) {
                     int x = g_remote_players[g_my_player_id].pos.x + 1;
                     int y = g_remote_players[g_my_player_id].pos.y;
                     int nwx = wx, nwy = wy, nx = x, ny = y;
-                    if (x >= MAP_WIDTH && wx < WORLD_W - 1) { nwx = wx + 1; nx = 0; }
+                    if (x >= MAP_WIDTH) { nwx = wx + 1; nx = 0; }
                     if (game_mp_is_open_world(nwx, nwy, nx, ny)) {
                         int occupied = 0; for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) { if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue; if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; } }
                         if (!occupied) { g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX; g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY; g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos; g_remote_players[g_my_player_id].worldX = nwx; g_remote_players[g_my_player_id].worldY = nwy; g_remote_players[g_my_player_id].pos.x = nx; g_remote_players[g_my_player_id].pos.y = ny; extern int game_tick_count; g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count; needsRedraw = 1; }
