@@ -518,21 +518,16 @@ void game_draw(void) {
                     char c = curMap->tiles[y][x];
             if (c == '#') { out = '#'; color = TERM_FG_BRIGHT_WHITE; }
             else if (c == '.') {
-                        // Highlight blocked entrances as bright white dots ':' character
-                        int midX = MAP_WIDTH / 2; int midY = MAP_HEIGHT / 2;
-                        int isEntrance = 0;
-                        if (x == 0 && y == midY && curWorldX > 0) isEntrance = 1;
-                        if (x == MAP_WIDTH - 1 && y == midY && curWorldX < WORLD_W - 1) isEntrance = 1;
-                        if (y == 0 && x == midX && curWorldY > 0) isEntrance = 1;
-                        if (y == MAP_HEIGHT - 1 && x == midX && curWorldY < WORLD_H - 1) isEntrance = 1;
-                        if (isEntrance) {
-                            int blocked = 1;
-                            if (x == 0 && y == midY && curWorldX > 0) blocked = (world[curWorldY][curWorldX-1].tiles[midY][MAP_WIDTH-1] == '#');
-                            if (x == MAP_WIDTH - 1 && y == midY && curWorldX < WORLD_W - 1) blocked = (world[curWorldY][curWorldX+1].tiles[midY][0] == '#');
-                            if (y == 0 && x == midX && curWorldY > 0) blocked = (world[curWorldY-1][curWorldX].tiles[MAP_HEIGHT-1][midX] == '#');
-                            if (y == MAP_HEIGHT - 1 && x == midX && curWorldY < WORLD_H - 1) blocked = (world[curWorldY+1][curWorldX].tiles[0][midX] == '#');
-                            if (blocked) { out = '.'; color = TERM_FG_BRIGHT_WHITE; }
-                            else { out = '.'; color = TERM_FG_BRIGHT_BLACK; }
+                        // Edge-aware: color edge dots white if adjacent map tile is a wall
+                        int isEdge = (x == 0 || x == MAP_WIDTH - 1 || y == 0 || y == MAP_HEIGHT - 1);
+                        if (isEdge) {
+                            char neighborChar = '.';
+                            if (x == 0 && curWorldX > 0) neighborChar = world[curWorldY][curWorldX-1].tiles[y][MAP_WIDTH-1];
+                            else if (x == MAP_WIDTH - 1 && curWorldX < WORLD_W - 1) neighborChar = world[curWorldY][curWorldX+1].tiles[y][0];
+                            else if (y == 0 && curWorldY > 0) neighborChar = world[curWorldY-1][curWorldX].tiles[MAP_HEIGHT-1][x];
+                            else if (y == MAP_HEIGHT - 1 && curWorldY < WORLD_H - 1) neighborChar = world[curWorldY+1][curWorldX].tiles[0][x];
+                            out = '.';
+                            color = (neighborChar == '#') ? TERM_FG_BRIGHT_WHITE : TERM_FG_BRIGHT_BLACK;
                         } else { out = '.'; color = TERM_FG_BRIGHT_BLACK; }
                     }
             else if (c == 'X') { out = 'X'; color = TERM_FG_BRIGHT_YELLOW; }

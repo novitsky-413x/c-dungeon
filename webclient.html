@@ -599,6 +599,16 @@
                 else if (ch === 'X') { glyph = 'X'; color = "#facc15"; }
                 else if (ch === 'W') { glyph = 'W'; color = "#d946ef"; }
                 else if (ch === '@') { glyph = '.'; color = "#6b7280"; }
+                // Edge-awareness: if this is an edge '.' (or ':') tile, color white when adjacent map tile is a wall '#'
+                if ((ch === '.' || ch === ':') && (x === 0 || x === MAP_WIDTH - 1 || y === 0 || y === MAP_HEIGHT - 1)) {
+                    let neighborChar = '.';
+                    if (x === 0 && wx > 0) neighborChar = worldTiles[wy][wx - 1][y][MAP_WIDTH - 1];
+                    else if (x === MAP_WIDTH - 1 && wx < WORLD_W - 1) neighborChar = worldTiles[wy][wx + 1][y][0];
+                    else if (y === 0 && wy > 0) neighborChar = worldTiles[wy - 1][wx][MAP_HEIGHT - 1][x];
+                    else if (y === MAP_HEIGHT - 1 && wy < WORLD_H - 1) neighborChar = worldTiles[wy + 1][wx][0][x];
+                    if (neighborChar === '#') color = "#ffffff"; else color = "#6b7280";
+                    glyph = '.'; // always draw as dot
+                }
                 ctx.fillStyle = color;
                 ctx.fillText(glyph, px + 1, py + 1);
             }

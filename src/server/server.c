@@ -396,6 +396,44 @@ static void send_map_to(int clientIdx, int wx, int wy) {
         int n = snprintf(line, sizeof(line), "ENTR %d %d %d %d %d %d\n", wx, wy, bl, br, bu, bd);
         send_text_to_client(clientIdx, line, n);
     }
+
+    // Send neighbor edge strips so clients can color border dots for any row/col, not just center
+    // Left neighbor: its rightmost column (x = MAP_WIDTH-1)
+    if (wx > 0) {
+        int nwx = wx - 1, nwy = wy;
+        for (int y = 0; y < MAP_HEIGHT; ++y) {
+            char ch = world[nwy][nwx].tiles[y][MAP_WIDTH - 1];
+            int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", nwx, nwy, MAP_WIDTH - 1, y, ch);
+            send_text_to_client(clientIdx, line, n);
+        }
+    }
+    // Right neighbor: its leftmost column (x = 0)
+    if (wx < WORLD_W - 1) {
+        int nwx = wx + 1, nwy = wy;
+        for (int y = 0; y < MAP_HEIGHT; ++y) {
+            char ch = world[nwy][nwx].tiles[y][0];
+            int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", nwx, nwy, 0, y, ch);
+            send_text_to_client(clientIdx, line, n);
+        }
+    }
+    // Up neighbor: its bottom row (y = MAP_HEIGHT-1)
+    if (wy > 0) {
+        int nwx = wx, nwy = wy - 1;
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            char ch = world[nwy][nwx].tiles[MAP_HEIGHT - 1][x];
+            int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", nwx, nwy, x, MAP_HEIGHT - 1, ch);
+            send_text_to_client(clientIdx, line, n);
+        }
+    }
+    // Down neighbor: its top row (y = 0)
+    if (wy < WORLD_H - 1) {
+        int nwx = wx, nwy = wy + 1;
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            char ch = world[nwy][nwx].tiles[0][x];
+            int n = snprintf(line, sizeof(line), "TILE %d %d %d %d %c\n", nwx, nwy, x, 0, ch);
+            send_text_to_client(clientIdx, line, n);
+        }
+    }
 }
 
 static void broadcast_entr(int wx, int wy) {
@@ -419,6 +457,8 @@ static void broadcast_entr(int wx, int wy) {
 static void maybe_broadcast_entr_due_to_tile_change(int wx, int wy, int x, int y) {
     int midX = MAP_WIDTH / 2;
     int midY = MAP_HEIGHT / 2;
+    // Always refresh ENTR for this map to re-mark entrances after TILE updates overwrite ':'
+    broadcast_entr(wx, wy);
     // If a border-center tile changed in this map, update the neighbor's ENTR status
     if (x == 0 && y == midY) {
         // This is left edge center of (wx,wy) -> affects right entrance of neighbor to the left (wx-1,wy)
