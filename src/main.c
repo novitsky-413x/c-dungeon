@@ -28,6 +28,38 @@ static int loadingStartTick = -1;
 static const int MIN_LOADING_TICKS = 30; // ~0.5s at ~60 FPS
 static int warmupFrames = 3; // draw a few initial frames to fully clear terminal
 
+// MP client-side prediction helpers
+static int g_lastFaceDx = 1, g_lastFaceDy = 0;
+static int g_predDx = 0, g_predDy = 0;
+static double g_predExpireMs = 0.0;
+static double g_lastPredStepMs = 0.0;
+
+static void try_predict_step(int dx, int dy) {
+    int wx = game_mp_get_cur_world_x();
+    int wy = game_mp_get_cur_world_y();
+    extern RemotePlayer g_remote_players[]; extern int g_my_player_id; extern int game_tick_count;
+    if (g_my_player_id < 0 || !g_remote_players[g_my_player_id].active) return;
+    int x = g_remote_players[g_my_player_id].pos.x + dx;
+    int y = g_remote_players[g_my_player_id].pos.y + dy;
+    int nwx = wx, nwy = wy, nx = x, ny = y;
+    if (dx < 0 && x < 0) { nwx = wx - 1; nx = MAP_WIDTH - 1; }
+    if (dx > 0 && x >= MAP_WIDTH) { nwx = wx + 1; nx = 0; }
+    if (dy < 0 && y < 0) { nwy = wy - 1; ny = MAP_HEIGHT - 1; }
+    if (dy > 0 && y >= MAP_HEIGHT) { nwy = wy + 1; ny = 0; }
+    if (!game_mp_is_open_world(nwx, nwy, nx, ny)) return;
+    int occupied = 0; for (int i = 0; i < MAX_REMOTE_PLAYERS; ++i) { if (i == g_my_player_id) continue; if (!g_remote_players[i].active) continue; if (g_remote_players[i].worldX == nwx && g_remote_players[i].worldY == nwy && g_remote_players[i].pos.x == nx && g_remote_players[i].pos.y == ny) { occupied = 1; break; } }
+    if (occupied) return;
+    g_remote_players[g_my_player_id].lastWorldX = g_remote_players[g_my_player_id].worldX;
+    g_remote_players[g_my_player_id].lastWorldY = g_remote_players[g_my_player_id].worldY;
+    g_remote_players[g_my_player_id].lastPos = g_remote_players[g_my_player_id].pos;
+    g_remote_players[g_my_player_id].worldX = nwx;
+    g_remote_players[g_my_player_id].worldY = nwy;
+    g_remote_players[g_my_player_id].pos.x = nx;
+    g_remote_players[g_my_player_id].pos.y = ny;
+    g_remote_players[g_my_player_id].lastUpdateTick = game_tick_count;
+    needsRedraw = 1;
+}
+
 static void handleInput(void) {
     int c = input_read_nonblocking();
     if (!c) return;
@@ -42,6 +74,7 @@ static void handleInput(void) {
         case 'w': case 'W':
             if (g_mp_active) {
                 client_send_input(0, -1, 0);
+                g_lastFaceDx = 0; g_lastFaceDy = -1; g_predDx = 0; g_predDy = -1; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
                 // Predict one step if open and not occupied
                 int wx = game_mp_get_cur_world_x();
                 int wy = game_mp_get_cur_world_y();
@@ -66,6 +99,7 @@ static void handleInput(void) {
         case 's': case 'S':
             if (g_mp_active) {
                 client_send_input(0, 1, 0);
+                g_lastFaceDx = 0; g_lastFaceDy = 1; g_predDx = 0; g_predDy = 1; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
                 int wx = game_mp_get_cur_world_x();
                 int wy = game_mp_get_cur_world_y();
                 extern RemotePlayer g_remote_players[]; extern int g_my_player_id;
@@ -85,6 +119,7 @@ static void handleInput(void) {
         case 'a': case 'A':
             if (g_mp_active) {
                 client_send_input(-1, 0, 0);
+                g_lastFaceDx = -1; g_lastFaceDy = 0; g_predDx = -1; g_predDy = 0; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
                 int wx = game_mp_get_cur_world_x();
                 int wy = game_mp_get_cur_world_y();
                 extern RemotePlayer g_remote_players[]; extern int g_my_player_id;
@@ -103,6 +138,7 @@ static void handleInput(void) {
         case 'd': case 'D':
             if (g_mp_active) {
                 client_send_input(1, 0, 0);
+                g_lastFaceDx = 1; g_lastFaceDy = 0; g_predDx = 1; g_predDy = 0; g_predExpireMs = now_ms() + 250.0; g_lastPredStepMs = 0.0;
                 int wx = game_mp_get_cur_world_x();
                 int wy = game_mp_get_cur_world_y();
                 extern RemotePlayer g_remote_players[]; extern int g_my_player_id;
@@ -119,7 +155,7 @@ static void handleInput(void) {
             } else if (game_attempt_move_player(1, 0))  { needsRedraw = 1; }
             break;
         case ' ':
-            if (g_mp_active) { client_send_input(0, 0, 1); game_mp_spawn_predicted_bullet(0, 0); needsRedraw = 1; }
+            if (g_mp_active) { client_send_input(0, 0, 1); game_mp_spawn_predicted_bullet(g_lastFaceDx, g_lastFaceDy); needsRedraw = 1; }
             else { game_player_shoot(); needsRedraw = 1; }
             break;
         case 'q': case 'Q': if (g_mp_active) client_send_bye(); game_running = 0; break;
@@ -210,6 +246,7 @@ int main(void) {
                 game_draw_loading(game_tick_count);
             } else {
                 loadingStartTick = -1;
+                // (Windows/Linux/mac) rely on server tick for sustained motion; we only predict on direction changes
                 game_mp_tick_predicted();
                 if ((game_tick_count % 6) == 0) { if (game_move_enemies()) needsRedraw = 1; }
                 if (game_update_projectiles()) needsRedraw = 1;

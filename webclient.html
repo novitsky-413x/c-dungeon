@@ -138,7 +138,7 @@
     let lastLocalShotAt = 0;
     let myFacing = { dx: 1, dy: 0 }; // default facing right
     const MOVE_STEP_MS = 50; // server tick ~50ms
-    const SHOOT_COOLDOWN_MS = 300; // matches server (6 * 50ms)
+    const SHOOT_COOLDOWN_MS = 400; // matches server (8 * 50ms)
     const PREDICT_BULLET_GRACE_MS = 250; // keep predicted bullets alive until confirmed
 
     // World state
@@ -196,7 +196,6 @@
     async function connect() {
         btnConnect.disabled = true;
         btnDisconnect.disabled = true;
-        recvBuf = "";
         youId = -1;
         joined = false;
         currentWorldX = -1; currentWorldY = -1; resetLoadingTracker();
@@ -223,6 +222,8 @@
                 return;
             }
             ws.binaryType = "arraybuffer";
+            // If using wss:// on non-standard port or behind a proxy, ensure the path is correct
+            // and that the server supports WebSocket on that endpoint.
             ws.onopen = () => {
                 if (connectAbort) { try { ws.close(); } catch {} resolve(false); return; }
                 opened = true;
@@ -268,9 +269,11 @@
             ws.onerror = () => {
                 if (!opened) setStatus("Failed: " + url);
             };
-            ws.onclose = () => {
+            ws.onclose = (ev) => {
                 if (socket === ws) {
-                    setStatus("Disconnected");
+                    const code = ev && typeof ev.code === 'number' ? ev.code : 0;
+                    const reason = ev && ev.reason ? (" ("+ev.reason+")") : "";
+                    setStatus("Disconnected" + (code ? (" ["+code+"]") : "") + reason);
                     btnConnect.disabled = false;
                     btnDisconnect.disabled = true;
                     socket = null;
@@ -393,6 +396,28 @@
             if (parts.length < 6) return;
             const [wx, wy, x, y, hp] = parseInts(parts, 1);
             enemies.push({ wx, wy, x, y, hp });
+            return;
+        }
+        if (tag === "ENTR") {
+            // ENTR wx wy bl br bu bd (1 blocked, 0 open)
+            if (parts.length < 8) return;
+            const wx = parseInt(parts[1], 10);
+            const wy = parseInt(parts[2], 10);
+            const bl = parseInt(parts[3], 10);
+            const br = parseInt(parts[4], 10);
+            const bu = parseInt(parts[5], 10);
+            const bd = parseInt(parts[6], 10);
+            if (wy>=0 && wy<WORLD_H && wx>=0 && wx<WORLD_W) {
+                const midX = Math.floor(MAP_WIDTH/2), midY = Math.floor(MAP_HEIGHT/2);
+                // Left entrance at (0, midY)
+                if (bl === 1) worldTiles[wy][wx][midY][0] = ':'; else if (worldTiles[wy][wx][midY][0] === ':') worldTiles[wy][wx][midY][0] = '.';
+                // Right entrance at (MAP_WIDTH-1, midY)
+                if (br === 1) worldTiles[wy][wx][midY][MAP_WIDTH-1] = ':'; else if (worldTiles[wy][wx][midY][MAP_WIDTH-1] === ':') worldTiles[wy][wx][midY][MAP_WIDTH-1] = '.';
+                // Up entrance at (midX, 0)
+                if (bu === 1) worldTiles[wy][wx][0][midX] = ':'; else if (worldTiles[wy][wx][0][midX] === ':') worldTiles[wy][wx][0][midX] = '.';
+                // Down entrance at (midX, MAP_HEIGHT-1)
+                if (bd === 1) worldTiles[wy][wx][MAP_HEIGHT-1][midX] = ':'; else if (worldTiles[wy][wx][MAP_HEIGHT-1][midX] === ':') worldTiles[wy][wx][MAP_HEIGHT-1][midX] = '.';
+            }
             return;
         }
         if (tag === "TILE") {
@@ -572,6 +597,7 @@
                 let color = "#aab1c2"; // bright black / gray
                 if (ch === '#') { glyph = '#'; color = "#ffffff"; }
                 else if (ch === '.') { glyph = '.'; color = "#6b7280"; }
+                else if (ch === ':') { glyph = '.'; color = "#ffffff"; }
                 else if (ch === 'X') { glyph = 'X'; color = "#facc15"; }
                 else if (ch === 'W') { glyph = 'W'; color = "#d946ef"; }
                 else if (ch === '@') { glyph = '.'; color = "#6b7280"; }
@@ -661,6 +687,9 @@
             const isYou = (i === youId);
             const flicker = p.invincibleTicks > 0 && ((p.invincibleTicks >> 3) & 1);
             if (flicker && isYou) continue;
+            // Hide remote players when standing on a bush tile ('M')
+            const under = worldTiles[wy][wx][ry] && worldTiles[wy][wx][ry][rx];
+            if (!isYou && under === 'M') continue;
             ctx.fillStyle = colorFromIndex(p.color);
             ctx.fillText('@', px + 1, py + 1);
         }

@@ -408,7 +408,7 @@ static void load_map_file(int mx, int my) {
     for (int y = 0; y < MAP_HEIGHT; ++y) {
         if (!fgets(line, sizeof(line), f)) { for (; y < MAP_HEIGHT; ++y) { for (int x = 0; x < MAP_WIDTH; ++x) m->tiles[y][x] = '#'; m->tiles[y][MAP_WIDTH] = '\0'; } break; }
         int len = (int)strcspn(line, "\r\n");
-        for (int x = 0; x < MAP_WIDTH; ++x) { char c = (x < len) ? line[x] : '#'; if (c!='#'&&c!='.'&&c!='X'&&c!='W'&&c!='@'&&c!='S') c='.'; m->tiles[y][x] = c; }
+        for (int x = 0; x < MAP_WIDTH; ++x) { char c = (x < len) ? line[x] : '#'; if (c!='#'&&c!='.'&&c!='X'&&c!='W'&&c!='@'&&c!='S'&&c!='M') c='.'; m->tiles[y][x] = c; }
         m->tiles[y][MAP_WIDTH] = '\0';
     }
     fclose(f);
@@ -548,6 +548,29 @@ static void broadcast_state(void) {
             clients[i].lastSentColor = clients[i].color;
         }
     }
+    // Broadcast entrance blocked flags for maps that currently have players
+    for (int wy = 0; wy < WORLD_H; ++wy) {
+        for (int wx = 0; wx < WORLD_W; ++wx) {
+            if (!is_map_active(wx, wy)) continue;
+            int midX = MAP_WIDTH / 2;
+            int midY = MAP_HEIGHT / 2;
+            int bl = 1, br = 1, bu = 1, bd = 1; // default blocked
+            if (wx > 0) {
+                char c = world[wy][wx-1].tiles[midY][MAP_WIDTH-1]; bl = (c == '#') ? 1 : 0;
+            }
+            if (wx < WORLD_W - 1) {
+                char c = world[wy][wx+1].tiles[midY][0]; br = (c == '#') ? 1 : 0;
+            }
+            if (wy > 0) {
+                char c = world[wy-1][wx].tiles[MAP_HEIGHT-1][midX]; bu = (c == '#') ? 1 : 0;
+            }
+            if (wy < WORLD_H - 1) {
+                char c = world[wy+1][wx].tiles[0][midX]; bd = (c == '#') ? 1 : 0;
+            }
+            int n = snprintf(line, sizeof(line), "ENTR %d %d %d %d %d %d\n", wx, wy, bl, br, bu, bd);
+            if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
+        }
+    }
     // broadcast bullets (include owner id)
     for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
         if (!bullets[b].active) continue;
@@ -592,70 +615,71 @@ static void step_bullets(void) {
         if (!bullets[i].active) continue;
         int dx = 0, dy = 0;
         switch (bullets[i].dir) { case DIR_UP: dy = -1; break; case DIR_DOWN: dy = 1; break; case DIR_LEFT: dx = -1; break; case DIR_RIGHT: dx = 1; break; }
-        int nx = bullets[i].pos.x + dx;
-        int ny = bullets[i].pos.y + dy;
-        if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) { bullets[i].active = 0; continue; }
-        Map *m = &world[bullets[i].worldY][bullets[i].worldX];
-        // Check enemy hit
-        for (int ei = 0; ei < MAX_ENEMIES; ++ei) {
-            SrvEnemy *e = &enemies[bullets[i].worldY][bullets[i].worldX][ei];
-            if (!e->active) continue;
-            if (e->pos.x == nx && e->pos.y == ny) {
-                if (e->hp > 0) e->hp--;
-                if (e->hp <= 0) {
-                    e->active = 0;
-                    // award score to bullet owner
-                    int owner = bullets[i].ownerId;
-                    if (owner >= 0 && owner < MAX_CLIENTS && clients[owner].connected) {
-                        clients[owner].score += 1;
-                    }
-                }
-                bullets[i].active = 0;
-                goto bullet_continue;
-            }
-        }
-        // Check player hit (PvP)
-        for (int ci = 0; ci < MAX_CLIENTS; ++ci) {
-            if (!clients[ci].connected) continue;
-            if (clients[ci].worldX != bullets[i].worldX || clients[ci].worldY != bullets[i].worldY) continue;
-            if (clients[ci].pos.x == nx && clients[ci].pos.y == ny) {
-                // Skip damage on spawn map; otherwise apply and respawn if needed
-                if (!map_has_spawn(clients[ci].worldX, clients[ci].worldY)) {
-                    if (clients[ci].invincibleTicks <= 0 && clients[ci].hp > 0) {
-                        clients[ci].hp--;
-                        clients[ci].invincibleTicks = 60; // 3s at 20 FPS (server tick ~50ms)
-                        if (clients[ci].hp <= 0) {
-                            // award 10 points to shooter on kill
-                            int owner = bullets[i].ownerId;
-                            if (owner >= 0 && owner < MAX_CLIENTS && clients[owner].connected) {
-                                clients[owner].score += 10;
-                            }
-                            place_near_spawn(&clients[ci]);
-                            clients[ci].hp = 3;
-                            clients[ci].superTicks = 0;
-                            clients[ci].shootCooldown = 0;
-                            clients[ci].invincibleTicks = 60;
+        // Move bullet faster: two sub-steps per tick
+        for (int step = 0; step < 2 && bullets[i].active; ++step) {
+            int nx = bullets[i].pos.x + dx;
+            int ny = bullets[i].pos.y + dy;
+            if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) { bullets[i].active = 0; break; }
+            Map *m = &world[bullets[i].worldY][bullets[i].worldX];
+            // Check enemy hit
+            for (int ei = 0; ei < MAX_ENEMIES; ++ei) {
+                SrvEnemy *e = &enemies[bullets[i].worldY][bullets[i].worldX][ei];
+                if (!e->active) continue;
+                if (e->pos.x == nx && e->pos.y == ny) {
+                    if (e->hp > 0) e->hp--;
+                    if (e->hp <= 0) {
+                        e->active = 0;
+                        int owner = bullets[i].ownerId;
+                        if (owner >= 0 && owner < MAX_CLIENTS && clients[owner].connected) {
+                            clients[owner].score += 1;
                         }
                     }
+                    bullets[i].active = 0;
+                    break;
+                }
+            }
+            if (!bullets[i].active) break;
+            // Check player hit (PvP)
+            for (int ci = 0; ci < MAX_CLIENTS; ++ci) {
+                if (!clients[ci].connected) continue;
+                if (clients[ci].worldX != bullets[i].worldX || clients[ci].worldY != bullets[i].worldY) continue;
+                if (clients[ci].pos.x == nx && clients[ci].pos.y == ny) {
+                    if (!map_has_spawn(clients[ci].worldX, clients[ci].worldY)) {
+                        if (clients[ci].invincibleTicks <= 0 && clients[ci].hp > 0) {
+                            clients[ci].hp--;
+                            clients[ci].invincibleTicks = 60;
+                            if (clients[ci].hp <= 0) {
+                                int owner = bullets[i].ownerId;
+                                if (owner >= 0 && owner < MAX_CLIENTS && clients[owner].connected) {
+                                    clients[owner].score += 10;
+                                }
+                                place_near_spawn(&clients[ci]);
+                                clients[ci].hp = 3;
+                                clients[ci].superTicks = 0;
+                                clients[ci].shootCooldown = 0;
+                                clients[ci].invincibleTicks = 60;
+                            }
+                        }
+                    }
+                    bullets[i].active = 0;
+                    break;
+                }
+            }
+            if (!bullets[i].active) break;
+            // Wall hit
+            if (m->tiles[ny][nx] == '#') {
+                if (m->wallDmg[ny][nx] < 4) {
+                    m->wallDmg[ny][nx]++;
+                } else {
+                    m->tiles[ny][nx] = '.';
+                    m->wallDmg[ny][nx] = 0;
+                    broadcast_tile(bullets[i].worldX, bullets[i].worldY, nx, ny, '.');
                 }
                 bullets[i].active = 0;
-                goto bullet_continue;
+                break;
             }
+            bullets[i].pos.x = nx; bullets[i].pos.y = ny;
         }
-        if (m->tiles[ny][nx] == '#') {
-            if (m->wallDmg[ny][nx] < 4) {
-                m->wallDmg[ny][nx]++;
-            } else {
-                m->tiles[ny][nx] = '.';
-                m->wallDmg[ny][nx] = 0;
-                broadcast_tile(bullets[i].worldX, bullets[i].worldY, nx, ny, '.');
-            }
-            bullets[i].active = 0;
-            continue;
-        }
-        bullets[i].pos.x = nx; bullets[i].pos.y = ny;
-bullet_continue:
-        ;
     }
 }
 
@@ -1120,7 +1144,7 @@ int main(int argc, char **argv) {
                             allow = 1; // spammable during super
                         } else if (clients[i].shootCooldown <= 0) {
                             allow = 1;
-                            clients[i].shootCooldown = 6; // ~300ms at 50ms tick
+                            clients[i].shootCooldown = 8; // ~400ms at 50ms tick (reduced fire rate)
                         }
                         if (allow) {
                             Direction dir = clients[i].facing;

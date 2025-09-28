@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <time.h>
 #include <termios.h>
+#else
+#include <windows.h>
 #endif
 #include "types.h"
 #include "term.h"
@@ -511,11 +513,25 @@ void game_draw(void) {
                 }
                 if (!drew) {
                     char c = curMap->tiles[y][x];
-                    if (c == '#') { out = '#'; color = TERM_FG_BRIGHT_WHITE; }
-                    else if (c == '.') { out = '.'; color = TERM_FG_BRIGHT_BLACK; }
-                    else if (c == 'X') { out = 'X'; color = TERM_FG_BRIGHT_YELLOW; }
+            if (c == '#') { out = '#'; color = TERM_FG_BRIGHT_WHITE; }
+            else if (c == '.') {
+                        // Highlight blocked entrances as bright white dots ':' character
+                        int midX = MAP_WIDTH / 2; int midY = MAP_HEIGHT / 2;
+                        int isEntrance = ((x == 0 && y == midY) || (x == MAP_WIDTH - 1 && y == midY) || (y == 0 && x == midX) || (y == MAP_HEIGHT - 1 && x == midX));
+                        if (isEntrance) {
+                            int blocked = 1;
+                            if (x == 0 && y == midY && curWorldX > 0) blocked = (world[curWorldY][curWorldX-1].tiles[midY][MAP_WIDTH-1] == '#');
+                            if (x == MAP_WIDTH - 1 && y == midY && curWorldX < WORLD_W - 1) blocked = (world[curWorldY][curWorldX+1].tiles[midY][0] == '#');
+                            if (y == 0 && x == midX && curWorldY > 0) blocked = (world[curWorldY-1][curWorldX].tiles[MAP_HEIGHT-1][midX] == '#');
+                            if (y == MAP_HEIGHT - 1 && x == midX && curWorldY < WORLD_H - 1) blocked = (world[curWorldY+1][curWorldX].tiles[0][midX] == '#');
+                            if (blocked) { out = '.'; color = TERM_FG_BRIGHT_WHITE; }
+                            else { out = '.'; color = TERM_FG_BRIGHT_BLACK; }
+                        } else { out = '.'; color = TERM_FG_BRIGHT_BLACK; }
+                    }
+            else if (c == 'X') { out = 'X'; color = TERM_FG_BRIGHT_YELLOW; }
                     else if (c == 'W') { out = 'W'; color = TERM_FG_BRIGHT_MAGENTA; }
-                    else if (c == '@') { out = '.'; color = TERM_FG_BRIGHT_BLACK; }
+            else if (c == 'M') { out = 'M'; color = TERM_FG_BRIGHT_GREEN; }
+            else if (c == '@') { out = '.'; color = TERM_FG_BRIGHT_BLACK; }
                     else { out = ' '; color = TERM_FG_WHITE; }
                 }
             }
@@ -548,12 +564,15 @@ void game_draw(void) {
                             rx = sx; ry = sy;
                         }
                     } else if (ticksSince >= REMOTE_INTERP_TICKS && ticksSince < REMOTE_EXTRAP_TICKS) {
-                        // extrapolate one step beyond current in last movement direction
-                        int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
-                        int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);
-                        int ex = clamp(rx + sdx, 0, MAP_WIDTH - 1);
-                        int ey = clamp(ry + sdy, 0, MAP_HEIGHT - 1);
-                        if (!game_is_blocked(ex, ey)) { rx = ex; ry = ey; }
+                        // Do not extrapolate for our own player to avoid snap-backs on long runs
+                        extern int g_my_player_id;
+                        if (i != g_my_player_id) {
+                            int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
+                            int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);
+                            int ex = clamp(rx + sdx, 0, MAP_WIDTH - 1);
+                            int ey = clamp(ry + sdy, 0, MAP_HEIGHT - 1);
+                            if (!game_is_blocked(ex, ey)) { rx = ex; ry = ey; }
+                        }
                     }
                 }
                 if (rx >= 0 && rx < MAP_WIDTH && ry >= 0 && ry < MAP_HEIGHT) {
@@ -689,8 +708,12 @@ void game_draw(void) {
     }
 
     #ifdef _WIN32
-    fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
-    fflush(stdout);
+    // Windows: reduce flicker using double-buffered console writes and no full clear between frames
+    // Draw into an off-screen buffer and blit at once via WriteConsoleA
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD written = 0;
+    WriteConsoleA(hOut, frame, (DWORD)(pos < cap ? pos : cap), &written, NULL);
+    // No fflush needed for WriteConsoleA
     #else
     {
         size_t remaining = (size_t)(pos < cap ? pos : cap);
@@ -758,8 +781,9 @@ void game_draw_loading(int tick) {
     }
 
     #ifdef _WIN32
-    fwrite(frame, 1, (size_t)(pos < cap ? pos : cap), stdout);
-    fflush(stdout);
+    HANDLE hOut2 = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD written2 = 0;
+    WriteConsoleA(hOut2, frame, (DWORD)(pos < cap ? pos : cap), &written2, NULL);
     #else
     {
         size_t remaining = (size_t)(pos < cap ? pos : cap);
