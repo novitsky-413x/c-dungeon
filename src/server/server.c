@@ -371,6 +371,31 @@ static void send_map_to(int clientIdx, int wx, int wy) {
         }
     }
     if (off > 0) send_text_to_client(clientIdx, buf, off);
+
+    // After sending tiles, also send entrance blocked/open status so clients can render border dots correctly.
+    {
+        int midX = MAP_WIDTH / 2;
+        int midY = MAP_HEIGHT / 2;
+        int bl = 0, br = 0, bu = 0, bd = 0; // 1 means blocked by a wall in the adjacent map
+        // Left neighbor blocks if exists and its right-edge center is a wall '#'
+        if (wx > 0) {
+            bl = (world[wy][wx - 1].tiles[midY][MAP_WIDTH - 1] == '#') ? 1 : 0;
+        }
+        // Right neighbor
+        if (wx < WORLD_W - 1) {
+            br = (world[wy][wx + 1].tiles[midY][0] == '#') ? 1 : 0;
+        }
+        // Up neighbor
+        if (wy > 0) {
+            bu = (world[wy - 1][wx].tiles[MAP_HEIGHT - 1][midX] == '#') ? 1 : 0;
+        }
+        // Down neighbor
+        if (wy < WORLD_H - 1) {
+            bd = (world[wy + 1][wx].tiles[0][midX] == '#') ? 1 : 0;
+        }
+        int n = snprintf(line, sizeof(line), "ENTR %d %d %d %d %d %d\n", wx, wy, bl, br, bu, bd);
+        send_text_to_client(clientIdx, line, n);
+    }
 }
 
 static FILE *try_open_map(const char *prefix, int mx, int my) {

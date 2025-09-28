@@ -400,7 +400,7 @@
         }
         if (tag === "ENTR") {
             // ENTR wx wy bl br bu bd (1 blocked, 0 open)
-            if (parts.length < 8) return;
+            if (parts.length < 7) return;
             const wx = parseInt(parts[1], 10);
             const wy = parseInt(parts[2], 10);
             const bl = parseInt(parts[3], 10);
@@ -480,11 +480,8 @@
             let wx = p.wx, wy = p.wy, x = p.x, y = p.y;
             let nx = x + inp.dx, ny = y + inp.dy;
             let nwx = wx, nwy = wy;
-            // handle world crossings similar to server logic; require the exact entry cell in next map to be open
-            if (nx < 0) { if (wx > 0 && worldTiles[wy][wx - 1][y] && worldTiles[wy][wx - 1][y][MAP_WIDTH - 1] !== '#') { nwx = wx - 1; nx = MAP_WIDTH - 1; ny = y; } else return; }
-            else if (nx >= MAP_WIDTH) { if (wx < WORLD_W - 1 && worldTiles[wy][wx + 1][y] && worldTiles[wy][wx + 1][y][0] !== '#') { nwx = wx + 1; nx = 0; ny = y; } else return; }
-            else if (ny < 0) { if (wy > 0 && worldTiles[wy - 1][wx][MAP_HEIGHT - 1] && worldTiles[wy - 1][wx][MAP_HEIGHT - 1][x] !== '#') { nwy = wy - 1; ny = MAP_HEIGHT - 1; nx = x; } else return; }
-            else if (ny >= MAP_HEIGHT) { if (wy < WORLD_H - 1 && worldTiles[wy + 1][wx][0] && worldTiles[wy + 1][wx][0][x] !== '#') { nwy = wy + 1; ny = 0; nx = x; } else return; }
+            // Do NOT predict cross-map transitions; wait for server authoritative move
+            if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) return;
             // If staying in map, ensure target not blocked
             const inSame = (nwx === wx && nwy === wy);
             if (inSame) {
@@ -512,7 +509,7 @@
                 // spawn predicted bullet at our current position moving in facing
                 const dir = myFacing;
                 const bx = p.x, by = p.y;
-                const b = { wx: p.wx, wy: p.wy, x: bx, y: by, active: 1, _last: null, _lastUpdateTick: gameTick, _seenBatch: currentBulletBatchId, predicted: true, predictedAt: performance.now() };
+                const b = { wx: p.wx, wy: p.wy, x: bx, y: by, active: 1, owner: youId, _last: null, _lastUpdateTick: gameTick, _seenBatch: currentBulletBatchId, predicted: true, predictedAt: performance.now() };
                 bullets.push(b);
                 lastLocalShotAt = performance.now();
             }
@@ -552,7 +549,7 @@
     // Time-based smoothing instead of pure tick offsets for better 60 FPS visuals
     const TICK_MS = 50; // server tick ~50ms
     const REMOTE_INTERP_TICKS = 3; // slightly quicker interpolation for snappier feel at 60 FPS
-    const REMOTE_EXTRAP_TICKS = 12; // tighten extrapolation window to reduce overshoot
+    const REMOTE_EXTRAP_TICKS = 3; // disable extrapolation to avoid snap-back artifacts
 
     // Simple rendering of one map: choose the map containing you, else center (4,4)
     function draw() {
