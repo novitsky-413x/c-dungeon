@@ -129,6 +129,16 @@
     let gameTick = 0;
     // Per-message marker to track which bullets were seen in the latest snapshot
     let currentBulletBatchId = 0;
+    // Client-side prediction state
+    let lastSentInput = { dx: 0, dy: 0, shoot: 0 };
+    let lastInputSentAt = 0;
+    let lastPredictedMoveAt = 0;
+    let prevShootState = 0;
+    let lastLocalShotAt = 0;
+    let myFacing = { dx: 1, dy: 0 }; // default facing right
+    const MOVE_STEP_MS = 50; // server tick ~50ms
+    const SHOOT_COOLDOWN_MS = 300; // matches server (6 * 50ms)
+    const PREDICT_BULLET_GRACE_MS = 250; // keep predicted bullets alive until confirmed
 
     // World state
     const worldTiles = new Array(WORLD_H);
@@ -230,11 +240,18 @@
                     enemies.length = 0;
                     recvBuf += text;
                     processBuffer();
-                    // Deactivate bullets not present in this snapshot
-                    for (let i = 0; i < bullets.length; i++) {
-                        const b = bullets[i];
-                        if (b._seenBatch !== currentBulletBatchId) b.active = 0;
+                // Deactivate bullets not present in this snapshot (except young predicted ones)
+                const now = performance.now();
+                for (let i = 0; i < bullets.length; i++) {
+                    const b = bullets[i];
+                    if (b._seenBatch !== currentBulletBatchId) {
+                        if (b.predicted && (now - (b.predictedAt || 0)) < PREDICT_BULLET_GRACE_MS) {
+                            // keep for a short grace period
+                        } else {
+                            b.active = 0;
+                        }
                     }
+                }
                     draw();
                 };
                 if (typeof ev.data === "string") {
@@ -337,6 +354,8 @@
                     currentWorldX = wx; currentWorldY = wy;
                     resetLoadingTracker();
                 }
+                // If server corrected our predicted state, snap smoothly by updating _last
+                // (Already handled via _last assignment above)
             }
             return;
         }
@@ -367,6 +386,8 @@
                 b._lastUpdateTick = gameTick;
                 b._seenBatch = currentBulletBatchId;
             }
+            // Mark as confirmed (no longer purely predicted)
+            if (b.predicted) { b.predicted = false; }
             return;
         }
         if (tag === "ENEMY") {
@@ -414,8 +435,70 @@
         return { dx, dy, shoot };
     }
 
+    function inputChanged(a, b) {
+        return a.dx !== b.dx || a.dy !== b.dy || a.shoot !== b.shoot;
+    }
+
+    function sendInputNow(inp) {
+        sendLine(`INPUT ${inp.dx} ${inp.dy} ${inp.shoot}`);
+        lastSentInput = inp;
+        lastInputSentAt = performance.now();
+    }
+
+    function tryPredictLocal(inp) {
+        if (!joined || youId < 0) return;
+        const p = players[youId];
+        if (!p || !p.active) return;
+        const now = performance.now();
+        // Update facing based on input
+        if (inp.dx !== 0 || inp.dy !== 0) myFacing = { dx: inp.dx, dy: inp.dy };
+        // Predict movement at most once per server tick
+        if ((inp.dx !== 0 || inp.dy !== 0) && (now - lastPredictedMoveAt) >= MOVE_STEP_MS) {
+            let wx = p.wx, wy = p.wy, x = p.x, y = p.y;
+            let nx = x + inp.dx, ny = y + inp.dy;
+            let nwx = wx, nwy = wy;
+            // handle world crossings similar to server logic
+            if (nx < 0) { if (wx > 0 && worldTiles[wy][wx - 1][y][MAP_WIDTH - 1] !== '#') { nwx = wx - 1; nx = MAP_WIDTH - 1; ny = y; } }
+            else if (nx >= MAP_WIDTH) { if (wx < WORLD_W - 1 && worldTiles[wy][wx + 1][y][0] !== '#') { nwx = wx + 1; nx = 0; ny = y; } }
+            else if (ny < 0) { if (wy > 0 && worldTiles[wy - 1][wx][MAP_HEIGHT - 1][x] !== '#') { nwy = wy - 1; ny = MAP_HEIGHT - 1; nx = x; } }
+            else if (ny >= MAP_HEIGHT) { if (wy < WORLD_H - 1 && worldTiles[wy + 1][wx][0][x] !== '#') { nwy = wy + 1; ny = 0; nx = x; } }
+            // If staying in map, ensure target not blocked
+            const inSame = (nwx === wx && nwy === wy);
+            if (inSame) {
+                if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
+                    if (worldTiles[wy][wx][ny][nx] === '#') return; // wall
+                    // avoid stepping onto another active player
+                    for (let i = 0; i < players.length; i++) {
+                        if (i === youId) continue; const op = players[i];
+                        if (!op || !op.active) continue; if (op.wx === wx && op.wy === wy && op.x === nx && op.y === ny) return;
+                    }
+                } else { return; }
+            }
+            // Apply predicted move
+            p._last = { wx: p.wx, wy: p.wy, x: p.x, y: p.y };
+            p.wx = nwx; p.wy = nwy; p.x = nx; p.y = ny; p._lastUpdateTick = gameTick;
+            // If we crossed maps, refresh loading trackers for new map tiles
+            if (nwx !== wx || nwy !== wy) { currentWorldX = nwx; currentWorldY = nwy; resetLoadingTracker(); }
+            lastPredictedMoveAt = now;
+        }
+        // Predict shooting on press (or rate-limited while super)
+        const shootPressed = (inp.shoot && !prevShootState) || (inp.shoot && p.superTicks > 0 && (performance.now() - lastLocalShotAt) > 100);
+        if (shootPressed) {
+            const canShoot = (p.superTicks > 0) || ((performance.now() - lastLocalShotAt) >= SHOOT_COOLDOWN_MS);
+            if (canShoot) {
+                // spawn predicted bullet at our current position moving in facing
+                const dir = myFacing;
+                const bx = p.x, by = p.y;
+                const b = { wx: p.wx, wy: p.wy, x: bx, y: by, active: 1, _last: null, _lastUpdateTick: gameTick, _seenBatch: currentBulletBatchId, predicted: true, predictedAt: performance.now() };
+                bullets.push(b);
+                lastLocalShotAt = performance.now();
+            }
+        }
+        prevShootState = inp.shoot;
+    }
+
     // Server-driven pacing: send inputs on a fixed cadence and ping at 1 Hz
-    const INPUT_INTERVAL_MS = 100;
+    const INPUT_INTERVAL_MS = 50; // align with server tick
     function startNetworkTimers() {
         stopNetworkTimers();
         pingTimer = setInterval(() => {
@@ -427,8 +510,13 @@
         }, 1000);
         inputTimer = setInterval(() => {
             if (!socket || socket.readyState !== 1) return;
-            const { dx, dy, shoot } = computeInput();
-            if (dx !== 0 || dy !== 0 || shoot !== 0) sendLine(`INPUT ${dx} ${dy} ${shoot}`);
+            const inp = computeInput();
+            // Immediate send on change; otherwise periodic keep-alive for held keys
+            const now = performance.now();
+            if (inputChanged(inp, lastSentInput) || (now - lastInputSentAt) >= INPUT_INTERVAL_MS) {
+                sendInputNow(inp);
+            }
+            tryPredictLocal(inp);
         }, INPUT_INTERVAL_MS);
     }
     function stopNetworkTimers() {
@@ -438,9 +526,10 @@
         lastPingAt = 0; pingMs = -1;
     }
 
-    // Timing for smoothing
-    const REMOTE_INTERP_TICKS = 4;
-    const REMOTE_EXTRAP_TICKS = 15;
+    // Time-based smoothing instead of pure tick offsets for better 60 FPS visuals
+    const TICK_MS = 50; // server tick ~50ms
+    const REMOTE_INTERP_TICKS = 3; // slightly quicker interpolation for snappier feel at 60 FPS
+    const REMOTE_EXTRAP_TICKS = 12; // tighten extrapolation window to reduce overshoot
 
     // Simple rendering of one map: choose the map containing you, else center (4,4)
     function draw() {
@@ -502,7 +591,7 @@
             ctx.fillText('E', px + 1, py + 1);
         }
 
-        // Draw bullets with interpolation/extrapolation similar to console
+        // Draw bullets with time-based interpolation/extrapolation
         for (const b of bullets) {
             if (!b.active || b.wx !== wx || b.wy !== wy) continue;
             let bx = b.x, by = b.y;
@@ -535,7 +624,7 @@
             ctx.fillText('*', px + 1, py + 1);
         }
 
-        // Draw players with interpolation/extrapolation similar to console
+        // Draw players with time-based interpolation/extrapolation
         for (let i = 0; i < players.length; i++) {
             const p = players[i];
             if (!p || !p.active || p.wx !== wx || p.wy !== wy) continue;
@@ -694,8 +783,14 @@
         if (e.key === "q" || e.key === "Q") { disconnect(); return; }
         if (e.key === " ") e.preventDefault();
         keyState.add(e.key);
+        const inp = computeInput();
+        if (!socket || socket.readyState !== 1) return;
+        if (inputChanged(inp, lastSentInput)) {
+            sendInputNow(inp);
+            tryPredictLocal(inp);
+        }
     });
-    window.addEventListener("keyup", (e) => { keyState.delete(e.key); });
+    window.addEventListener("keyup", (e) => { keyState.delete(e.key); const inp = computeInput(); if (socket && socket.readyState === 1) { if (inputChanged(inp, lastSentInput)) { sendInputNow(inp); tryPredictLocal(inp); } } });
 
     btnConnect.addEventListener("click", () => { connectAbort = false; connect(); });
     btnDisconnect.addEventListener("click", disconnect);
@@ -727,11 +822,11 @@
         if (!touchControlsEl) return;
         touchControlsEl.style.display = "block";
         document.body.classList.add("is-mobile");
-        bindButton(btnLeft, () => { touchState.left = true; }, () => { touchState.left = false; });
-        bindButton(btnRight, () => { touchState.right = true; }, () => { touchState.right = false; });
-        bindButton(btnUp, () => { touchState.up = true; }, () => { touchState.up = false; });
-        bindButton(btnDown, () => { touchState.down = true; }, () => { touchState.down = false; });
-        bindButton(btnShoot, () => { touchState.shoot = true; }, () => { touchState.shoot = false; });
+        bindButton(btnLeft, () => { touchState.left = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.left = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
+        bindButton(btnRight, () => { touchState.right = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.right = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
+        bindButton(btnUp, () => { touchState.up = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.up = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
+        bindButton(btnDown, () => { touchState.down = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.down = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
+        bindButton(btnShoot, () => { touchState.shoot = true; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} }, () => { touchState.shoot = false; const inp = computeInput(); if (socket && socket.readyState===1){ sendInputNow(inp); tryPredictLocal(inp);} });
     }
     if (isMobileClient()) { setupTouchControls(); }
 

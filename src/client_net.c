@@ -74,9 +74,7 @@ int client_poll_messages(void) {
     char tmp[2048];
     int n = net_recv_nonblocking(g_sock, tmp, sizeof(tmp));
     if (n <= 0) return 0;
-    // Reset snapshots on new data chunk
-    for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) g_remote_bullets[i].active = 0;
-    for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) g_remote_enemies[i].active = 0;
+    // Do not reset snapshots on arbitrary chunks; wait for TICK boundary
     // Append to rolling buffer, clamp if necessary (drop oldest on overflow)
     int cap = (int)sizeof(g_recv_buf) - 1;
     if (g_recv_len + n > cap) {
@@ -118,6 +116,11 @@ int client_poll_messages(void) {
         if (line[0] == '\0') continue;
         if (strncmp(line, "YOU ", 4) == 0) {
             g_my_player_id = atoi(line + 4);
+            changed = 1;
+        } else if (strncmp(line, "TICK", 4) == 0) {
+            // Snapshot boundary: clear transient objects and prepare for fresh state
+            for (int i = 0; i < MAX_REMOTE_BULLETS; ++i) g_remote_bullets[i].active = 0;
+            for (int i = 0; i < MAX_REMOTE_ENEMIES; ++i) g_remote_enemies[i].active = 0;
             changed = 1;
         } else if (strcmp(line, "READY") == 0) {
             g_ready_received = 1;

@@ -73,6 +73,17 @@ typedef struct {
     int refillTicks; // every N ticks, add tokens
     int refillAmount; // tokens added per refill
     int tickSinceRefill;
+    // Last snapshot sent in broadcast (for delta compression)
+    int lastSentActive;
+    int lastSentWorldX;
+    int lastSentWorldY;
+    int lastSentPosX;
+    int lastSentPosY;
+    int lastSentColor;
+    int lastSentHp;
+    int lastSentInv;
+    int lastSentSup;
+    int lastSentScore;
 } Client;
 
 static Map world[WORLD_H][WORLD_W];
@@ -509,12 +520,39 @@ static void broadcast_state(void) {
     }
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         int active = clients[i].connected ? 1 : 0;
-        int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks, clients[i].score);
-        if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
+        int need = 0;
+        if (clients[i].lastSentActive != active) need = 1;
+        else if (active) {
+            if (clients[i].lastSentWorldX != clients[i].worldX) need = 1;
+            else if (clients[i].lastSentWorldY != clients[i].worldY) need = 1;
+            else if (clients[i].lastSentPosX != clients[i].pos.x) need = 1;
+            else if (clients[i].lastSentPosY != clients[i].pos.y) need = 1;
+            else if (clients[i].lastSentHp != clients[i].hp) need = 1;
+            else if (clients[i].lastSentInv != clients[i].invincibleTicks) need = 1;
+            else if (clients[i].lastSentSup != clients[i].superTicks) need = 1;
+            else if (clients[i].lastSentScore != clients[i].score) need = 1;
+            else if (clients[i].lastSentColor != clients[i].color) need = 1;
+        }
+        if (need) {
+            int n = snprintf(line, sizeof(line), "PLAYER %d %d %d %d %d %d %d %d %d %d %d\n", i, clients[i].worldX, clients[i].worldY, clients[i].pos.x, clients[i].pos.y, clients[i].color, active, clients[i].hp, clients[i].invincibleTicks, clients[i].superTicks, clients[i].score);
+            if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
+            clients[i].lastSentActive = active;
+            clients[i].lastSentWorldX = clients[i].worldX;
+            clients[i].lastSentWorldY = clients[i].worldY;
+            clients[i].lastSentPosX = clients[i].pos.x;
+            clients[i].lastSentPosY = clients[i].pos.y;
+            clients[i].lastSentHp = clients[i].hp;
+            clients[i].lastSentInv = clients[i].invincibleTicks;
+            clients[i].lastSentSup = clients[i].superTicks;
+            clients[i].lastSentScore = clients[i].score;
+            clients[i].lastSentColor = clients[i].color;
+        }
     }
     // broadcast bullets
     for (int b = 0; b < MAX_REMOTE_BULLETS; ++b) {
         if (!bullets[b].active) continue;
+        // Only broadcast bullets on maps that currently have players
+        if (!is_map_active(bullets[b].worldX, bullets[b].worldY)) continue;
         int n = snprintf(line, sizeof(line), "BULLET %d %d %d %d %d\n", bullets[b].worldX, bullets[b].worldY, bullets[b].pos.x, bullets[b].pos.y, 1);
         if (off + n < (int)sizeof(buf)) { memcpy(buf + off, line, n); off += n; }
     }
