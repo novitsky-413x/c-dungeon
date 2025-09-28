@@ -15,6 +15,9 @@
 static Vec2 playerPos;
 static Direction playerFacing = DIR_RIGHT;
 static Projectile projectiles[MAX_PROJECTILES];
+// Predicted bullets for MP client-only visuals
+typedef struct { int active; int wx, wy; Vec2 pos; Vec2 lastPos; int lastTick; int dx, dy; double spawnedAtMs; } PredBullet;
+static PredBullet predictedBullets[32];
 
 // World configuration (3x3 grid: x0-y0 to x2-y2)
 #define WORLD_W 9
@@ -135,6 +138,7 @@ void game_init(void) {
     world_init();
     playerFacing = DIR_RIGHT;
     for (int i = 0; i < MAX_PROJECTILES; ++i) projectiles[i].active = 0;
+    for (int i = 0; i < 32; ++i) predictedBullets[i].active = 0;
     game_player_lives = 3;
     game_score = 0;
 }
@@ -289,6 +293,11 @@ static int is_wall(int x, int y) {
     if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return 0;
     return curMap->tiles[y][x] == '#';
 }
+int game_mp_is_open_world(int wx, int wy, int x, int y) {
+    if (wx < 0 || wx >= WORLD_W || wy < 0 || wy >= WORLD_H) return 0;
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return 0;
+    return world[wy][wx].tiles[y][x] != '#';
+}
 
 static void damage_wall(int x, int y) {
     if (!is_wall(x, y)) return;
@@ -339,6 +348,58 @@ int game_update_projectiles(void) {
         }
     }
     return changed;
+}
+
+void game_mp_spawn_predicted_bullet(int dx, int dy) {
+    if (!g_mp_active) return;
+    // Spawn only if we know our player
+    extern int g_my_player_id; extern RemotePlayer g_remote_players[]; extern int game_tick_count;
+    if (g_my_player_id < 0 || !g_remote_players[g_my_player_id].active) return;
+    // Choose a free slot
+    int slot = -1; for (int i = 0; i < 32; ++i) if (!predictedBullets[i].active) { slot = i; break; }
+    if (slot < 0) return;
+    PredBullet *pb = &predictedBullets[slot];
+    pb->active = 1;
+    pb->wx = g_remote_players[g_my_player_id].worldX;
+    pb->wy = g_remote_players[g_my_player_id].worldY;
+    pb->pos = g_remote_players[g_my_player_id].pos;
+    pb->lastPos = pb->pos;
+    pb->dx = (dx<0)?-1:((dx>0)?1:0);
+    pb->dy = (dy<0)?-1:((dy>0)?1:0);
+    pb->lastTick = game_tick_count;
+    pb->spawnedAtMs = 0.0;
+}
+
+void game_mp_confirm_bullet(int wx, int wy, int x, int y) {
+    // If a predicted bullet overlaps this server bullet, drop the predicted one
+    for (int i = 0; i < 32; ++i) {
+        if (!predictedBullets[i].active) continue;
+        if (predictedBullets[i].wx == wx && predictedBullets[i].wy == wy && predictedBullets[i].pos.x == x && predictedBullets[i].pos.y == y) {
+            predictedBullets[i].active = 0; break;
+        }
+    }
+}
+
+void game_mp_tick_predicted(void) {
+    if (!g_mp_active) return;
+    extern int game_tick_count;
+    int changed = 0;
+    for (int i = 0; i < 32; ++i) {
+        if (!predictedBullets[i].active) continue;
+        if (predictedBullets[i].lastTick == game_tick_count) continue;
+        int nx = predictedBullets[i].pos.x + predictedBullets[i].dx;
+        int ny = predictedBullets[i].pos.y + predictedBullets[i].dy;
+        // Clamp within map; do not cross walls; remove if blocked
+        if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) { predictedBullets[i].active = 0; continue; }
+        if (world[predictedBullets[i].wy][predictedBullets[i].wx].tiles[ny][nx] == '#') { predictedBullets[i].active = 0; continue; }
+        predictedBullets[i].lastPos = predictedBullets[i].pos;
+        predictedBullets[i].pos.x = nx; predictedBullets[i].pos.y = ny;
+        predictedBullets[i].lastTick = game_tick_count;
+        changed = 1;
+    }
+    if (changed) {
+        // Nothing needed here; draw reads predictedBullets directly
+    }
 }
 
 int game_tick_status(void) {
@@ -406,11 +467,17 @@ void game_draw(void) {
                                     bx = sx; by = sy;
                                 }
                             } else if (bticks >= REMOTE_INTERP_TICKS && bticks < REMOTE_EXTRAP_TICKS) {
+                                // Do not extrapolate our own bullets to avoid behind-spawn artifacts
+                                extern int g_my_player_id;
+                                if (g_remote_bullets[bi].ownerId == g_my_player_id) {
+                                    // skip extrapolation
+                                } else {
                                 int sdx = (mdx > 0) ? 1 : (mdx < 0 ? -1 : 0);
                                 int sdy = (mdy > 0) ? 1 : (mdy < 0 ? -1 : 0);
                                 int ex = clamp(bx + sdx, 0, MAP_WIDTH - 1);
                                 int ey = clamp(by + sdy, 0, MAP_HEIGHT - 1);
                                 if (!is_wall(ex, ey)) { bx = ex; by = ey; }
+                                }
                             }
                         }
                         if (bx == x && by == y) {
@@ -418,6 +485,16 @@ void game_draw(void) {
                             color = TERM_FG_BRIGHT_GREEN;
                             drew = 1;
                             break;
+                        }
+                    }
+                    // Draw predicted bullets overlay on top
+                    if (!drew) {
+                        for (int pi = 0; pi < 32; ++pi) {
+                            if (!predictedBullets[pi].active) continue;
+                            if (predictedBullets[pi].wx != curWorldX || predictedBullets[pi].wy != curWorldY) continue;
+                            if (predictedBullets[pi].pos.x == x && predictedBullets[pi].pos.y == y) {
+                                out = '*'; color = TERM_FG_BRIGHT_GREEN; drew = 1; break;
+                            }
                         }
                     }
                 }

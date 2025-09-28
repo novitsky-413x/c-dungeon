@@ -193,6 +193,11 @@ int client_poll_messages(void) {
                     g_remote_bullets[slot].pos.y = y;
                     if (parsed == 6) g_remote_bullets[slot].ownerId = owner; else g_remote_bullets[slot].ownerId = -1;
                     extern int game_tick_count; g_remote_bullets[slot].lastUpdateTick = game_tick_count;
+                    // Confirm predicted bullet if location matches
+                    if (parsed == 6) {
+                        extern void game_mp_confirm_bullet(int wx, int wy, int x, int y);
+                        game_mp_confirm_bullet(wx, wy, x, y);
+                    }
                     changed = 1;
                 }
             }

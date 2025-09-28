@@ -115,7 +115,8 @@
     let lastPingAt = 0;
     let pingMs = -1;
     const pingOutstanding = Object.create(null);
-    let recvBuf = "";
+    // WS snapshots are full lines per message; we parse per-message for lower GC
+    let netDirty = false;
     let pingTimer = null;
     let inputTimer = null;
     // Track whether the current map (world tile) is fully received
@@ -234,25 +235,25 @@
             };
             ws.onmessage = (ev) => {
                 const handleText = (text) => {
-                    // Each server tick arrives as one WS message containing a batch of lines.
-                    // For bullets, keep objects to enable smoothing; mark seen via batch id and deactivate unseen after apply.
                     currentBulletBatchId = (currentBulletBatchId + 1) | 0;
                     enemies.length = 0;
-                    recvBuf += text;
-                    processBuffer();
-                // Deactivate bullets not present in this snapshot (except young predicted ones)
-                const now = performance.now();
-                for (let i = 0; i < bullets.length; i++) {
-                    const b = bullets[i];
-                    if (b._seenBatch !== currentBulletBatchId) {
-                        if (b.predicted && (now - (b.predictedAt || 0)) < PREDICT_BULLET_GRACE_MS) {
-                            // keep for a short grace period
-                        } else {
-                            b.active = 0;
+                    const lines = text.split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i].trim();
+                        if (!line) continue;
+                        handleLine(line);
+                    }
+                    const now = performance.now();
+                    for (let i = 0; i < bullets.length; i++) {
+                        const b = bullets[i];
+                        if (b._seenBatch !== currentBulletBatchId) {
+                            if (b.predicted && (now - (b.predictedAt || 0)) < PREDICT_BULLET_GRACE_MS) {
+                            } else {
+                                b.active = 0;
+                            }
                         }
                     }
-                }
-                    draw();
+                    netDirty = true;
                 };
                 if (typeof ev.data === "string") {
                     handleText(ev.data);
@@ -261,7 +262,6 @@
                 } else if (ev.data instanceof ArrayBuffer) {
                     try { handleText(new TextDecoder().decode(ev.data)); } catch {}
                 } else {
-                    // Fallback: try toString
                     try { handleText(String(ev.data || "")); } catch {}
                 }
             };
@@ -295,15 +295,7 @@
 
     function clamp(val, lo, hi) { return Math.max(lo, Math.min(hi, val)); }
 
-    function processBuffer() {
-        while (true) {
-            const idx = recvBuf.indexOf("\n");
-            if (idx < 0) break;
-            const line = recvBuf.slice(0, idx);
-            recvBuf = recvBuf.slice(idx + 1);
-            handleLine(line.trim());
-        }
-    }
+    // No rolling buffer needed under WS; server frames are per-message
 
     function ensurePlayersSize(id) {
         while (players.length <= id) players.push({active:0, wx:0, wy:0, x:0, y:0, color:0, hp:0, invincibleTicks:0, superTicks:0, score:0});
@@ -616,7 +608,7 @@
                         }
                     } else if (ticks >= REMOTE_INTERP_TICKS && ticks < REMOTE_EXTRAP_TICKS) {
                         // Do not extrapolate local player's bullets to avoid behind-spawn artifacts
-                        if (owner === youId) {
+                        if (b.owner === youId) {
                             bx = bx; by = by;
                         } else {
                         const sdx = mdx > 0 ? 1 : (mdx < 0 ? -1 : 0);
@@ -788,6 +780,7 @@
     function loop(ts) {
         // Advance a client-side tick counter to drive smoothing timing
         gameTick = (gameTick + 1) | 0;
+        if (netDirty) { netDirty = false; }
         draw();
         requestAnimationFrame(loop);
     }

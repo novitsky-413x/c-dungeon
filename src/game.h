@@ -12,6 +12,12 @@ int game_attempt_move_player(int dx, int dy);
 void game_check_win_lose(void);
 void game_draw(void);
 void game_draw_loading(int tick);
+// Query openness of a tile at specific world coordinates (non-#)
+int game_mp_is_open_world(int wx, int wy, int x, int y);
+// Predicted bullets overlay for MP
+void game_mp_spawn_predicted_bullet(int dx, int dy);
+void game_mp_tick_predicted(void);
+void game_mp_confirm_bullet(int wx, int wy, int x, int y);
 
 // Shooting API
 void game_player_shoot(void);
