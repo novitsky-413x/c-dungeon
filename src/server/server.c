@@ -802,8 +802,9 @@ int main(int argc, char **argv) {
                     if (getnameinfo((struct sockaddr*)&ss, slen, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
                         strncpy(host, "?", sizeof(host)-1); strncpy(serv, "?", sizeof(serv)-1);
                     }
-                    // Per-IP concurrent limit
-                    if (ws_count_active_for_ip(host) >= MAX_WS_PER_IP || !ws_rate_allow(host)) {
+                    // Per-IP concurrent limit (disabled)
+                    // if (ws_count_active_for_ip(host) >= MAX_WS_PER_IP || !ws_rate_allow(host)) {
+                    if (0) {
 #ifdef _WIN32
                         closesocket(cs);
 #else
