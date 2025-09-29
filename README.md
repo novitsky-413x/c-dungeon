@@ -20,6 +20,7 @@ A tiny cross-platform terminal game written in C. Runs in PowerShell, bash, and 
   - Scoreboard (left) and minimap (right) on the same row under HP
     - Scoreboard shows up to 16 connected players as colored `@` with 4-digit scores (e.g., 9999)
     - Minimap shows a 9x9 world overview with current map marked `X` and players as colored `@`
+    - Ping shown in HUD during Multiplayer
   - Hints (controls) below scoreboard/minimap
   - Multiplayer loading screen: animated sparkles with centered “LOADING” shown until the client receives its first authoritative snapshot (with a brief minimum display)
 - Multiplayer (optional)
@@ -143,6 +144,7 @@ While connecting and awaiting the first authoritative snapshot, the client displ
 ## Controls
 - Move: WASD or Arrow keys
 - Shoot: Space
+- Build: B (place a wall in the facing direction)
 - Quit: Q
 
 Mobile web:
@@ -162,6 +164,7 @@ Mobile web:
   - `HELLO` (sent once on connect; informational)
   - `INPUT dx dy shoot` where `dx`/`dy` in {-1,0,1}, `shoot` in {0,1}
   - `BYE` (disconnect request)
+  - `PING token`
 - Server → Client (snapshot each tick; lines may be interleaved):
   - `TICK n` (monotonic server tick counter to help clients align snapshots)
   - `YOU id` (assigned once upon connect)
@@ -169,9 +172,11 @@ Mobile web:
     - `active` is 0/1
     - `hp` is current lives (server-side in MP)
     - `score` is server-tracked; +1 per enemy kill, +10 per player kill
-  - `BULLET wx wy x y active` for active remote bullets
+  - `BULLET wx wy x y active ownerId` for active remote bullets, includes shooter id
   - `ENEMY wx wy x y hp` for visible enemies (hp>0 means alive)
   - `TILE wx wy x y ch` to mutate a map tile (e.g., breaking a wall `#`→'.')
+  - `ENTR wx wy bl br bu bd` entrance-block flags (0=open, 1=blocked) at central edges
+  - `READY` after initial snapshot, signaling the client may start rendering gameplay
 - Server → Client (refusal):
   - `FULL` when server is at capacity
 

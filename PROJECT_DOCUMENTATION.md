@@ -106,7 +106,7 @@ Key functions:
 - `client_send_bye()`: send `BYE` before disconnect.
 
 Protocol lines handled:
-- `YOU id`, `PLAYER ...`, `BULLET ...`, `ENEMY ...`, `TILE ...`, `PONG token`, `FULL`.
+- `YOU id`, `PLAYER ...`, `BULLET ... ownerId`, `ENEMY ...`, `TILE ...`, `ENTR ...`, `READY`, `PONG token`, `FULL`.
 
 References:
 - Text protocols and line parsing tips: `https://www.rfc-editor.org/rfc/rfc5234` (ABNF basics)
@@ -194,7 +194,7 @@ Flow:
 5) On quit: restore terminal; print outcome message.
 
 Input mapping:
-- WASD/Arrows move; Space shoots; Q quits. In MP, inputs are sent to server; local movement/projectiles are disabled.
+- WASD/Arrows move; Space shoots; B builds a wall ahead; Q quits. In MP, inputs are sent to server; local movement/projectiles are disabled.
 
 ---
 
@@ -405,15 +405,18 @@ Client → Server:
 - `INPUT dx dy shoot` where `dx,dy ∈ {-1,0,1}`, `shoot ∈ {0,1}`
 - `BYE`
 - `PING token`
+ - `BUILD` — request to place a wall at the tile directly ahead of the player's facing; the server validates occupancy and map bounds, and if allowed, mutates `.` to `#` and broadcasts `TILE`.
 
 Server → Client:
 - `FULL`
 - `YOU id`
 - `TICK n`
 - `PLAYER id wx wy x y color active hp invincibleTicks superTicks score`
-- `BULLET wx wy x y active`
+- `BULLET wx wy x y active ownerId`
 - `ENEMY wx wy x y hp`
 - `TILE wx wy x y ch`
+ - `ENTR wx wy bl br bu bd` — entrance-block flags for center edges based on neighbor walls (0=open, 1=blocked)
+ - `READY` — sent after the initial snapshot so clients can begin rendering gameplay/UI
 
 ---
 
